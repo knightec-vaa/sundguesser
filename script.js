@@ -1,12 +1,14 @@
 // SundGuesser - Sundsvall GeoGuessr-like game
 // Daily games are fetched pre-encrypted from data/games/<date>.enc.json and
-// decrypted client-side using the key injected into config.js at deploy time.
+// decrypted server-side during deploy into data/games/<date>.json.
 const ROUND_COUNT = 5;
 const DISTANCE_DECAY_METERS = 2000; // controls how quickly score falls off with distance
 const PERFECT_DISTANCE_METERS = 25; // guesses this close are treated as a perfect 100
+const SCORES_STORAGE_KEY = "sundguesser:scores";
 
 let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLayers;
 let activeGameDate = null;
+let manifestCache = null;
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000; // meters
@@ -36,6 +38,44 @@ function shuffle(arr) {
   return a;
 }
 
+// --- Persisted scores (first completion per day only) -----------------
+
+function loadSavedScores() {
+  try {
+    return JSON.parse(localStorage.getItem(SCORES_STORAGE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function getSavedScore(date) {
+  return loadSavedScores()[date] || null;
+}
+
+// Only the FIRST time a given day's game is completed is the score kept —
+// replays don't overwrite your official result for that day.
+function saveFirstScoreIfMissing(date, score, scores) {
+  const saved = loadSavedScores();
+  if (saved[date]) return { record: saved[date], justSaved: false };
+  const record = { score, roundScores: scores, recordedAt: new Date().toISOString() };
+  saved[date] = record;
+  localStorage.setItem(SCORES_STORAGE_KEY, JSON.stringify(saved));
+  return { record, justSaved: true };
+}
+
+// --- URL <-> selected date -----------------------------------------
+
+function getDateFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("date");
+}
+
+function setDateInUrl(date) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("date", date);
+  window.history.replaceState({}, "", url);
+}
+
 function initMap() {
   map = L.map("map").setView([62.392, 17.307], 12);
   // Official OpenStreetMap tile server — no API key required. Subject to the
@@ -61,33 +101,53 @@ function showFatalError(message) {
   document.getElementById("guessBtn").disabled = true;
 }
 
-async function pickGameDate(manifest) {
+async function fetchManifest() {
+  if (manifestCache) return manifestCache;
+  const res = await fetch("data/manifest.json", { cache: "no-store" });
+  if (!res.ok) throw new Error("No games published yet.");
+  manifestCache = await res.json();
+  return manifestCache;
+}
+
+function pickDefaultDate(manifest) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const available = (manifest.dates || []).filter((d) => d <= todayStr).sort();
   if (available.length === 0) return null;
   return available[available.length - 1];
 }
 
-async function loadTodaysGame() {
-  // data/games/<date>.json only exists in the deployed/dev build — it's produced
-  // by decrypting data/games/<date>.enc.json inside CI (tools/decrypt_for_deploy.py).
-  // The source repo only ever contains the encrypted version.
-  const manifestRes = await fetch("data/manifest.json", { cache: "no-store" });
-  if (!manifestRes.ok) throw new Error("No games published yet.");
-  const manifest = await manifestRes.json();
-  const date = await pickGameDate(manifest);
-  if (!date) throw new Error("No games available yet. Check back on a weekday!");
+async function loadGameForDate(date) {
   const gameRes = await fetch(`data/games/${date}.json`, { cache: "no-store" });
   if (!gameRes.ok) throw new Error(`Failed to load game for ${date}.`);
   const game = await gameRes.json();
   return { date, locations: game.locations };
 }
 
+function populateDatePicker(manifest, selectedDate) {
+  const select = document.getElementById("dateSelect");
+  select.innerHTML = "";
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dates = (manifest.dates || []).filter((d) => d <= todayStr).sort().reverse();
+
+  dates.forEach((date) => {
+    const opt = document.createElement("option");
+    opt.value = date;
+    const saved = getSavedScore(date);
+    const label = date === todayStr ? `${date} (today)` : date;
+    opt.textContent = saved ? `${label} — played (${saved.score}/100)` : label;
+    select.appendChild(opt);
+  });
+
+  select.value = selectedDate;
+}
+
 function updateHud() {
   document.getElementById("roundInfo").textContent = `Round ${currentRoundIndex + 1} / ${ROUND_COUNT}`;
   const avg =
     roundScores.length > 0 ? Math.round(roundScores.reduce((a, b) => a + b, 0) / roundScores.length) : 0;
-  document.getElementById("scoreInfo").textContent = `Score: ${avg}/100`;
+  const emoji = roundScores.length > 0 ? ` ${scoreEmoji(avg)}` : "";
+  document.getElementById("scoreInfo").textContent = `Score: ${avg}/100${emoji}`;
+  renderWeekdayPin(document.getElementById("weekdayPin"), activeGameDate);
 }
 
 function clearResultLayers() {
@@ -130,7 +190,11 @@ function makeGuess() {
   document.getElementById("resultTitle").textContent = loc.name;
   const distText = distance >= 1000 ? `${(distance / 1000).toFixed(2)} km` : `${Math.round(distance)} m`;
   document.getElementById("resultDistance").textContent = `Distance: ${distText}`;
-  document.getElementById("resultPoints").textContent = `${points} / 100`;
+
+  const pointsEl = document.getElementById("resultPoints");
+  animateScoreCountUp(pointsEl, points, { suffix: ` / 100 ${scoreEmoji(points)}` });
+  playScoreEffect(points);
+
   document.getElementById("guessBtn").disabled = true;
   document.getElementById("resultOverlay").classList.remove("hidden");
   updateHud();
@@ -145,9 +209,24 @@ function nextRound() {
   if (currentRoundIndex >= ROUND_COUNT) {
     document.getElementById("resultOverlay").classList.add("hidden");
     const finalScore = finalScoreValue();
-    document.getElementById("finalScore").textContent = `Final Score: ${finalScore} / 100`;
+
+    const finalScoreEl = document.getElementById("finalScore");
+    animateScoreCountUp(finalScoreEl, finalScore, {
+      prefix: "Final Score: ",
+      suffix: ` / 100 ${scoreEmoji(finalScore)}`
+    });
+    playScoreEffect(finalScore);
+
     renderRoundBreakdown();
     document.getElementById("finalOverlay").classList.remove("hidden");
+
+    const { record, justSaved } = saveFirstScoreIfMissing(activeGameDate, finalScore, roundScores);
+    const noteEl = document.getElementById("firstScoreNote");
+    noteEl.textContent = justSaved
+      ? "Saved as your official score for this day!"
+      : `Your official score for this day was already recorded: ${record.score}/100.`;
+
+    populateDatePicker(manifestCache, activeGameDate);
   } else {
     loadRound();
   }
@@ -184,10 +263,27 @@ function drawShareCanvas() {
   ctx.fillStyle = "#c9d6e3";
   ctx.fillText(activeGameDate ? `Game of ${activeGameDate}` : "", 28, 78);
 
+  // Weekday pin chip, top-right.
+  if (activeGameDate) {
+    const info = weekdayInfoForDate(activeGameDate);
+    const chipW = 64, chipH = 28, chipX = W - chipW - 24, chipY = 24;
+    ctx.fillStyle = info.color;
+    drawRoundedRect(ctx, chipX, chipY, chipW, chipH, 14);
+    ctx.fill();
+    ctx.fillStyle = "#101820";
+    ctx.font = "bold 14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(info.short, chipX + chipW / 2, chipY + chipH / 2 + 5);
+    ctx.textAlign = "left";
+  }
+
   ctx.font = "bold 72px sans-serif";
   ctx.fillStyle = "#ffd166";
   const finalScore = finalScoreValue();
   ctx.fillText(`${finalScore}/100`, 28, 165);
+
+  ctx.font = "48px sans-serif";
+  ctx.fillText(scoreEmoji(finalScore), 340, 155);
 
   ctx.font = "16px sans-serif";
   ctx.fillStyle = "#ffffff";
@@ -235,11 +331,24 @@ async function shareResult() {
   }, "image/png");
 }
 
-async function startGame() {
+async function startGame(requestedDate) {
   document.getElementById("finalOverlay").classList.add("hidden");
   document.getElementById("shareStatus").textContent = "";
+  const noteEl = document.getElementById("firstScoreNote");
+  if (noteEl) noteEl.textContent = "";
+
   try {
-    const { date, locations } = await loadTodaysGame();
+    const manifest = await fetchManifest();
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const validDates = new Set((manifest.dates || []).filter((d) => d <= todayStr));
+
+    let date = requestedDate && validDates.has(requestedDate) ? requestedDate : pickDefaultDate(manifest);
+    if (!date) throw new Error("No games available yet. Check back on a weekday!");
+
+    populateDatePicker(manifest, date);
+    setDateInUrl(date);
+
+    const { locations } = await loadGameForDate(date);
     activeGameDate = date;
     roundLocations = shuffle(locations);
     currentRoundIndex = 0;
@@ -248,15 +357,16 @@ async function startGame() {
     loadRound();
   } catch (err) {
     console.error(err);
-    showFatalError(err.message || "Failed to load today's game.");
+    showFatalError(err.message || "Failed to load the game.");
   }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   initMap();
-  startGame();
+  startGame(getDateFromUrl());
   document.getElementById("guessBtn").addEventListener("click", makeGuess);
   document.getElementById("nextBtn").addEventListener("click", nextRound);
-  document.getElementById("restartBtn").addEventListener("click", startGame);
+  document.getElementById("restartBtn").addEventListener("click", () => startGame(activeGameDate));
   document.getElementById("shareBtn").addEventListener("click", shareResult);
+  document.getElementById("dateSelect").addEventListener("change", (e) => startGame(e.target.value));
 });

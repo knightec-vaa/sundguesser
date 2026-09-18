@@ -11,8 +11,13 @@
 <header>
   <h1>🧭 SundGuesser</h1>
   <div id="hud">
+    <span id="weekdayPin" class="weekday-pin"></span>
     <span id="roundInfo">Round 1 / 5</span>
     <span id="scoreInfo">Score: 0</span>
+    <span id="datePicker">
+      <label for="dateSelect">Game:</label>
+      <select id="dateSelect"></select>
+    </span>
   </div>
 </header>
 
@@ -40,6 +45,7 @@
     <h2>Game Over!</h2>
     <p id="finalScore"></p>
     <ul id="roundBreakdown"></ul>
+    <p id="firstScoreNote" class="shareStatus"></p>
     <button id="shareBtn">📋 Share Result</button>
     <p id="shareStatus" class="shareStatus"></p>
     <button id="restartBtn">Play Again</button>
@@ -47,6 +53,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="effects.js"></script>
 <script src="script.js"></script>
 </body>
 </html>
