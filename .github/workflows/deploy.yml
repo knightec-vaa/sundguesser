@@ -1,0 +1,54 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install cryptography
+
+      - name: Assemble static site (decrypt games server-side)
+        env:
+          LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
+        run: |
+          mkdir -p dist
+          cp index.html style.css script.js dist/
+          # Decrypts data/games/*.enc.json -> dist/data/games/*.json (plaintext).
+          # The key and the encrypted pool never leave this CI job; only the
+          # already-published per-day games are decrypted into the deployed site.
+          python3 tools/decrypt_for_deploy.py dist
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
