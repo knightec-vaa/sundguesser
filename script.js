@@ -2,13 +2,15 @@
 // Daily games are fetched pre-encrypted from data/games/<date>.enc.json and
 // decrypted server-side during deploy into data/games/<date>.json.
 const ROUND_COUNT = 5;
-const DISTANCE_DECAY_METERS = 2000; // controls how quickly score falls off with distance
-const PERFECT_DISTANCE_METERS = 25; // guesses this close are treated as a perfect 100
+const DISTANCE_DECAY_METERS = 800; // controls how quickly score falls off with distance
+const DISTANCE_SCORE_EXPONENT = 1.3; // >1 sharpens the mid-range falloff (harder, more precise scoring)
+const PERFECT_DISTANCE_METERS = 15; // guesses this close are treated as a perfect 100
 const SCORES_STORAGE_KEY = "sundguesser:scores";
 
 let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLayers;
 let activeGameDate = null;
 let manifestCache = null;
+let currentShareSeed = null;
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000; // meters
@@ -23,9 +25,11 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 }
 
 // Distance -> 0-100 percentage score. Close guesses round up to 100; far guesses decay to 0.
+// The exponent sharpens the falloff so being "somewhat close" isn't as forgiving —
+// a couple of km off should genuinely hurt.
 function distanceToScore(distanceMeters) {
   if (distanceMeters <= PERFECT_DISTANCE_METERS) return 100;
-  const raw = 100 * Math.exp(-distanceMeters / DISTANCE_DECAY_METERS);
+  const raw = 100 * Math.exp(-Math.pow(distanceMeters / DISTANCE_DECAY_METERS, DISTANCE_SCORE_EXPONENT));
   return Math.max(0, Math.min(100, Math.round(raw)));
 }
 
@@ -53,11 +57,14 @@ function getSavedScore(date) {
 }
 
 // Only the FIRST time a given day's game is completed is the score kept —
-// replays don't overwrite your official result for that day.
+// replays don't overwrite your official result for that day. A random seed
+// is stored alongside it so the share-card background stays consistent
+// whenever this score is viewed again later.
 function saveFirstScoreIfMissing(date, score, scores) {
   const saved = loadSavedScores();
   if (saved[date]) return { record: saved[date], justSaved: false };
-  const record = { score, roundScores: scores, recordedAt: new Date().toISOString() };
+  const seed = Math.floor(Math.random() * 1e9);
+  const record = { score, roundScores: scores, recordedAt: new Date().toISOString(), seed };
   saved[date] = record;
   localStorage.setItem(SCORES_STORAGE_KEY, JSON.stringify(saved));
   return { record, justSaved: true };
@@ -148,6 +155,17 @@ function updateHud() {
   const emoji = roundScores.length > 0 ? ` ${scoreEmoji(avg)}` : "";
   document.getElementById("scoreInfo").textContent = `Score: ${avg}/100${emoji}`;
   renderWeekdayPin(document.getElementById("weekdayPin"), activeGameDate);
+  updateViewScoreButton();
+}
+
+// Shows/hides the "View My Score" button depending on whether the currently
+// selected day already has a saved (first) score, so a closed overlay can
+// always be reopened.
+function updateViewScoreButton() {
+  const btn = document.getElementById("viewScoreBtn");
+  if (!btn) return;
+  const saved = activeGameDate ? getSavedScore(activeGameDate) : null;
+  btn.classList.toggle("hidden", !saved);
 }
 
 function clearResultLayers() {
@@ -221,12 +239,14 @@ function nextRound() {
     document.getElementById("finalOverlay").classList.remove("hidden");
 
     const { record, justSaved } = saveFirstScoreIfMissing(activeGameDate, finalScore, roundScores);
+    currentShareSeed = record.seed;
     const noteEl = document.getElementById("firstScoreNote");
     noteEl.textContent = justSaved
       ? "Saved as your official score for this day!"
       : `Your official score for this day was already recorded: ${record.score}/100.`;
 
     populateDatePicker(manifestCache, activeGameDate);
+    updateViewScoreButton();
   } else {
     loadRound();
   }
@@ -242,6 +262,25 @@ function renderRoundBreakdown() {
   });
 }
 
+// Re-displays a previously saved (first) score for the given day, e.g. after
+// accidentally closing the final overlay. Does not re-save or affect the
+// in-progress round state.
+function showSavedScoreOverlay(date) {
+  const record = getSavedScore(date);
+  if (!record) return;
+
+  roundScores = record.roundScores;
+  currentShareSeed = typeof record.seed === "number" ? record.seed : hashSeed(`${date}:${record.score}`);
+
+  document.getElementById("finalScore").textContent =
+    `Final Score: ${record.score} / 100 ${scoreEmoji(record.score)}`;
+  renderRoundBreakdown();
+  document.getElementById("firstScoreNote").textContent =
+    `Your official score for this day: ${record.score}/100.`;
+  document.getElementById("shareStatus").textContent = "";
+  document.getElementById("finalOverlay").classList.remove("hidden");
+}
+
 function drawShareCanvas() {
   const canvas = document.createElement("canvas");
   const W = 600, H = 340;
@@ -249,11 +288,9 @@ function drawShareCanvas() {
   canvas.height = H;
   const ctx = canvas.getContext("2d");
 
-  const grad = ctx.createLinearGradient(0, 0, W, H);
-  grad.addColorStop(0, "#1e3a5f");
-  grad.addColorStop(1, "#274472");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
+  const seed = typeof currentShareSeed === "number" ? currentShareSeed : hashSeed(activeGameDate || "sundguesser");
+  const theme = themeForSeed(seed);
+  paintShareBackground(ctx, theme, W, H);
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 30px sans-serif";
@@ -302,19 +339,36 @@ function drawShareCanvas() {
   ctx.font = "13px sans-serif";
   ctx.fillStyle = "#8fa5bd";
   ctx.fillText("Can you beat this score?", 28, H - 18);
+  ctx.textAlign = "right";
+  ctx.fillText(shareSiteUrl(), W - 28, H - 18);
+  ctx.textAlign = "left";
 
   return canvas;
+}
+
+// The plain site URL (no query string) so anyone seeing the shared image
+// knows where to go play, even if only the image itself gets pasted.
+function shareSiteUrl() {
+  return `${window.location.origin}${window.location.pathname}`.replace(/\/index\.html$/, "/");
 }
 
 async function shareResult() {
   const canvas = drawShareCanvas();
   const status = document.getElementById("shareStatus");
+  const shareUrl = shareSiteUrl();
   canvas.toBlob(async (blob) => {
     if (!blob) return;
     try {
       if (navigator.clipboard && window.ClipboardItem) {
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        status.textContent = "Copied to clipboard! Paste it into Slack or Discord.";
+        // Write both the image and the site link as separate clipboard
+        // representations. Apps that accept rich paste (Slack/Discord) will
+        // paste the image; ones that only accept text fall back to the link.
+        const item = new ClipboardItem({
+          "image/png": blob,
+          "text/plain": new Blob([shareUrl], { type: "text/plain" })
+        });
+        await navigator.clipboard.write([item]);
+        status.textContent = `Copied! Paste into Slack/Discord — the link (${shareUrl}) is included too.`;
         return;
       }
       throw new Error("Clipboard image API not supported");
@@ -353,6 +407,7 @@ async function startGame(requestedDate) {
     roundLocations = shuffle(locations);
     currentRoundIndex = 0;
     roundScores = [];
+    currentShareSeed = null;
     updateHud();
     loadRound();
   } catch (err) {
@@ -369,4 +424,5 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("restartBtn").addEventListener("click", () => startGame(activeGameDate));
   document.getElementById("shareBtn").addEventListener("click", shareResult);
   document.getElementById("dateSelect").addEventListener("change", (e) => startGame(e.target.value));
+  document.getElementById("viewScoreBtn").addEventListener("click", () => showSavedScoreOverlay(activeGameDate));
 });

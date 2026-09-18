@@ -82,6 +82,21 @@ main {
   background: #37a86f;
 }
 
+#viewScoreBtn {
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  background: #2c8c5c;
+  color: white;
+  cursor: pointer;
+}
+
+#viewScoreBtn:hover {
+  background: #37a86f;
+}
+
 .hidden {
   display: none !important;
 }

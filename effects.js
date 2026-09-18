@@ -108,6 +108,52 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// --- Share-card background variety ---------------------------------------
+// A small palette of aesthetically-matched gradients plus one "rainbow" one
+// (a nod to vaaraniemi.se's old rainbow banner). Picked deterministically
+// from a per-score seed so a given completed score always redraws the same
+// way, but different people/days end up with visible variety.
+const SHARE_THEMES = [
+  { name: "ocean", stops: ["#1e3a5f", "#274472"] },
+  { name: "sunset", stops: ["#c9482f", "#c77a1f"] },
+  { name: "forest", stops: ["#134e5e", "#71b280"] },
+  { name: "grape", stops: ["#654ea3", "#eaafc8"] },
+  { name: "midnight", stops: ["#0f2027", "#2c5364"] },
+  { name: "candy", stops: ["#ee0979", "#ff6a00"] },
+  { name: "rainbow", rainbow: true }
+];
+
+// Simple deterministic string hash (djb2-ish) -> non-negative int.
+function hashSeed(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = (h * 33) ^ str.charCodeAt(i);
+  }
+  return Math.abs(h | 0);
+}
+
+function themeForSeed(seed) {
+  const idx = Math.abs(seed) % SHARE_THEMES.length;
+  return SHARE_THEMES[idx];
+}
+
+// Fills the canvas background with the given theme's gradient, then applies
+// a subtle dark scrim so white text stays readable on lighter themes too.
+function paintShareBackground(ctx, theme, W, H) {
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  if (theme.rainbow) {
+    const hues = [0, 45, 90, 150, 210, 270, 330];
+    hues.forEach((h, i) => grad.addColorStop(i / (hues.length - 1), `hsl(${h}, 75%, 45%)`));
+  } else {
+    grad.addColorStop(0, theme.stops[0]);
+    grad.addColorStop(1, theme.stops[1]);
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+  ctx.fillRect(0, 0, W, H);
+}
+
 // Animates a number counting up from 0 to `target` inside `el`, appending
 // `suffix` (e.g. " / 100") once finished. Used so scores feel like they're
 // climbing rather than just appearing.
