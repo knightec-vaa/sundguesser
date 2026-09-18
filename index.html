@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SundGuesser</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>🧭 SundGuesser</h1>
+  <div id="hud">
+    <span id="roundInfo">Round 1 / 5</span>
+    <span id="scoreInfo">Score: 0</span>
+  </div>
+</header>
+
+<main>
+  <div id="photoPane">
+    <img id="streetPhoto" src="" alt="Guess this location in Sundsvall">
+  </div>
+  <div id="mapPane">
+    <div id="map"></div>
+    <button id="guessBtn" disabled>Make Guess</button>
+  </div>
+</main>
+
+<div id="resultOverlay" class="hidden">
+  <div id="resultBox">
+    <h2 id="resultTitle"></h2>
+    <p id="resultDistance"></p>
+    <p id="resultPoints"></p>
+    <button id="nextBtn">Next Round</button>
+  </div>
+</div>
+
+<div id="finalOverlay" class="hidden">
+  <div id="finalBox">
+    <h2>Game Over!</h2>
+    <p id="finalScore"></p>
+    <button id="restartBtn">Play Again</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="locations.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
