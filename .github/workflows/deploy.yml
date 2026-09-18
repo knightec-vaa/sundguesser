@@ -35,7 +35,7 @@ jobs:
           LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
         run: |
           mkdir -p dist
-          cp index.html style.css script.js effects.js dist/
+          cp index.html style.css script.js effects.js favicon.svg dist/
           # Decrypts data/games/*.enc.json -> dist/data/games/*.json (plaintext).
           # The key and the encrypted pool never leave this CI job; only the
           # already-published per-day games are decrypted into the deployed site.
