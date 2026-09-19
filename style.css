@@ -15,8 +15,21 @@ header {
   align-items: center;
   justify-content: space-between;
   padding: 10px 20px;
-  background: #1b2735;
-  border-bottom: 2px solid #2c8c5c;
+  background: #101d33;
+  border-bottom: 3px solid #0057b8;
+  position: relative;
+}
+
+/* Echoes the Medelpad coat of arms' blue/red wave bands as a thin accent
+   strip under the header. */
+header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 3px;
+  background: #d40000;
 }
 
 header h1 {
@@ -121,7 +134,7 @@ main {
   font-size: 1.1rem;
   font-weight: bold;
   border: none;
-  background: #2c8c5c;
+  background: #0057b8;
   color: white;
   cursor: pointer;
 }
@@ -132,7 +145,7 @@ main {
 }
 
 #guessBtn:not(:disabled):hover {
-  background: #37a86f;
+  background: #2f7feb;
 }
 
 #viewScoreBtn {
@@ -141,13 +154,13 @@ main {
   font-weight: bold;
   border: none;
   border-radius: 6px;
-  background: #2c8c5c;
+  background: #0057b8;
   color: white;
   cursor: pointer;
 }
 
 #viewScoreBtn:hover {
-  background: #37a86f;
+  background: #2f7feb;
 }
 
 .hidden {
@@ -181,13 +194,13 @@ main {
   padding: 30px 40px;
   border-radius: 10px;
   text-align: center;
-  border: 2px solid #2c8c5c;
+  border: 2px solid #0057b8;
   min-width: 300px;
 }
 
 #resultBox h2, #finalBox h2 {
   margin-top: 0;
-  color: #37a86f;
+  color: #2f7feb;
 }
 
 #resultBox p, #finalBox p {
@@ -216,20 +229,29 @@ main {
   font-weight: bold;
   border: none;
   border-radius: 6px;
-  background: #2c8c5c;
+  background: #0057b8;
   color: white;
   cursor: pointer;
 }
 
 #resultBox button:hover, #finalBox button:hover {
-  background: #37a86f;
+  background: #2f7feb;
 }
 
 /* --- Share button tiered border/hover effect (depends on final score) ---
    The legendary tier reuses the exact rainbow gradient recipe from
    vaaraniemi.se's ".rainbow" class (124deg linear-gradient, same color
    stops), panned like a scrolling rainbow instead of vaaraniemi's static
-   fill, since here it's an animated border rather than a link background. */
+   fill, since here it's an animated border rather than a link background.
+
+   Uses a two-pseudo-element "ring behind a solid front" trick: a negative
+   z-index pseudo-element still paints *above* its own element's background
+   (per the CSS stacking spec — a common surprise), so a single ::before
+   with the gradient ends up covering the whole button instead of peeking
+   out as a thin border. Fixed by adding a second pseudo (::after) as a
+   solid "front" layer at z-index -1 (above the ring's -2), matching the
+   button's own fill and inset:0 so only the outer band of the ring
+   (inset:-3px) remains visible. */
 #shareBtn {
   position: relative;
   isolation: isolate;
@@ -241,7 +263,7 @@ main {
   position: absolute;
   inset: -3px;
   border-radius: 9px;
-  z-index: -1;
+  z-index: -2;
   background-size: 300% 300%;
   opacity: 0;
   transition: opacity 0.25s ease;
@@ -251,13 +273,44 @@ main {
   opacity: 1;
 }
 
+/* Solid "front" layer — see comment above. Matches the plain button fill
+   so at rest (ring hidden) the button looks unchanged; on hover it swaps to
+   the same lighter hover shade the other buttons use. */
+#shareBtn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  z-index: -1;
+  background: #0057b8;
+  transition: background 0.2s ease;
+}
+
+#shareBtn:hover::after {
+  background: #2f7feb;
+}
+
+/* Angle used to animate conic-gradient border rings (tier-good/meh/bad/
+   terrible below). Animating this custom property directly (rather than
+   `transform: rotate()` on the whole ::before box) keeps the gradient's
+   rotation centered on the gradient itself instead of spinning the
+   rectangular box behind a wide rectangular button — the old rotate()
+   approach made corners of the ring poke out/gap unevenly on non-square
+   buttons. Falls back to a static (non-animated) ring in browsers without
+   @property support, which is a safe, non-broken degradation. */
+@property --ring-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
 @keyframes shareRainbowPan {
   0% { background-position: 0% 50%; }
   100% { background-position: 200% 50%; }
 }
 
-@keyframes shareBorderSpin {
-  to { transform: rotate(360deg); }
+@keyframes shareRingSpin {
+  to { --ring-angle: 360deg; }
 }
 
 /* legendary (95+): vaaraniemi.se rainbow, scrolling */
@@ -279,42 +332,46 @@ main {
   animation: shareRainbowPan 4.5s linear infinite;
 }
 
-/* good (60-79): cool blue/green sweep, rotating conic ring */
+/* good (60-79): Medelpad blue sweep, rotating conic ring */
 #shareBtn.tier-good::before {
-  background-image: conic-gradient(from 0deg, #2c8c5c, #37a86f, #3bd4ff, #37a86f, #2c8c5c);
+  --ring-angle: 0deg;
+  background-image: conic-gradient(from var(--ring-angle), #003d8f, #0057b8, #7fc4ff, #0057b8, #003d8f);
 }
 
 #shareBtn.tier-good:hover::before {
-  animation: shareBorderSpin 3.5s linear infinite;
+  animation: shareRingSpin 3.5s linear infinite;
 }
 
-/* meh (40-59): muted amber/gray sweep, slower */
+/* meh (40-59): muted silver/steel sweep, slower */
 #shareBtn.tier-meh::before {
-  background: conic-gradient(from 0deg, #8a7a4a, #bfa25a, #6b6b6b, #bfa25a, #8a7a4a);
+  --ring-angle: 0deg;
+  background-image: conic-gradient(from var(--ring-angle), #6b7684, #a8b3c0, #6b7684);
 }
 
 #shareBtn.tier-meh:hover::before {
-  animation: shareBorderSpin 5s linear infinite;
+  animation: shareRingSpin 5s linear infinite;
 }
 
-/* bad (20-39): dull rust/gray, sluggish */
+/* bad (20-39): dull Medelpad red, sluggish */
 #shareBtn.tier-bad::before {
-  background: conic-gradient(from 0deg, #6b3b3b, #555, #6b3b3b);
+  --ring-angle: 0deg;
+  background-image: conic-gradient(from var(--ring-angle), #6b0000, #8a1a1a, #6b0000);
 }
 
 #shareBtn.tier-bad:hover::before {
-  animation: shareBorderSpin 7s linear infinite;
+  animation: shareRingSpin 7s linear infinite;
   filter: grayscale(0.3);
 }
 
 /* terrible (<20): grayscale, barely moving — matches the 🥀 vibe */
 #shareBtn.tier-terrible::before {
-  background: conic-gradient(from 0deg, #444, #777, #444);
+  --ring-angle: 0deg;
+  background-image: conic-gradient(from var(--ring-angle), #444, #777, #444);
   filter: grayscale(0.8);
 }
 
 #shareBtn.tier-terrible:hover::before {
-  animation: shareBorderSpin 10s linear infinite;
+  animation: shareRingSpin 10s linear infinite;
 }
 
 .actual-marker {
@@ -376,7 +433,7 @@ main {
 #datePicker select {
   background: #101820;
   color: #eee;
-  border: 1px solid #2c8c5c;
+  border: 1px solid #0057b8;
   border-radius: 4px;
   padding: 4px 8px;
   font-size: 0.85rem;

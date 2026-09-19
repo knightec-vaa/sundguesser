@@ -147,14 +147,16 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
 // A small palette of aesthetically-matched gradients plus one "rainbow" one
 // (a nod to vaaraniemi.se's old rainbow banner). Picked deterministically
 // from a per-score seed so a given completed score always redraws the same
-// way, but different people/days end up with visible variety.
+// way, but different people/days end up with visible variety. Recolored to
+// echo the Medelpad landskap coat of arms (deep blue, vivid blue, red,
+// silver/steel), plus one rainbow easter-egg theme for legendary scores.
 const SHARE_THEMES = [
-  { name: "ocean", stops: ["#1e3a5f", "#274472"] },
-  { name: "sunset", stops: ["#c9482f", "#c77a1f"] },
-  { name: "forest", stops: ["#134e5e", "#71b280"] },
-  { name: "grape", stops: ["#654ea3", "#eaafc8"] },
-  { name: "midnight", stops: ["#0f2027", "#2c5364"] },
-  { name: "candy", stops: ["#ee0979", "#ff6a00"] },
+  { name: "medelpad", stops: ["#003d8f", "#0057b8"] },
+  { name: "vagor", stops: ["#001c3d", "#003d8f", "#0057b8"] },
+  { name: "rostrod", stops: ["#7a0000", "#d40000"] },
+  { name: "silverskold", stops: ["#334155", "#7fc4ff"] },
+  { name: "flagg", stops: ["#003d8f", "#eeeeee", "#d40000"] },
+  { name: "djuphav", stops: ["#00142e", "#00316b"] },
   { name: "rainbow", rainbow: true }
 ];
 
@@ -174,14 +176,16 @@ function themeForSeed(seed) {
 
 // Fills the canvas background with the given theme's gradient, then applies
 // a subtle dark scrim so white text stays readable on lighter themes too.
+// `theme.stops` can be any length (2+) — evenly distributed along the
+// gradient — to support both simple 2-color themes and the "flagg"/"vagor"
+// 3-stop ones.
 function paintShareBackground(ctx, theme, W, H) {
   const grad = ctx.createLinearGradient(0, 0, W, H);
   if (theme.rainbow) {
     const hues = [0, 45, 90, 150, 210, 270, 330];
     hues.forEach((h, i) => grad.addColorStop(i / (hues.length - 1), `hsl(${h}, 75%, 45%)`));
   } else {
-    grad.addColorStop(0, theme.stops[0]);
-    grad.addColorStop(1, theme.stops[1]);
+    theme.stops.forEach((color, i) => grad.addColorStop(i / (theme.stops.length - 1), color));
   }
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
