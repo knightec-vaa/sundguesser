@@ -14,6 +14,7 @@ const STREAK_MIN_LENGTH = 2; // rounds in a row needed before any streak effect 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.4;
+const CITY_CENTER = [62.3908, 17.3069];
 
 let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLayers;
 let roundLocked = false; // true while the result panel is showing, so map
@@ -63,6 +64,39 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+function roundAreaLabel(location) {
+  if (location.area) return location.area;
+  const suffix = String(location.name || "").split(",").pop().trim();
+  return suffix
+    .replace(/^Glebygd\s+/i, "")
+    .replace(/\s+tätortsområde$/i, "")
+    .replace(/\s+kommun$/i, "");
+}
+
+function roundIsHard(location, index) {
+  if (location.difficulty) return location.difficulty === "hard";
+  const hardCount = 1 + (hashSeed(`${activeGameDate || "game"}:hard-round-count`) % 2);
+  return index >= roundLocations.length - hardCount;
+}
+
+function frameMapForRound(location) {
+  const distance = haversineDistance(CITY_CENTER[0], CITY_CENTER[1], location.lat, location.lng);
+  if (distance < 2500) {
+    map.setView(CITY_CENTER, 12);
+    return;
+  }
+
+  // Keep the target inside a broad regional frame without centering directly
+  // on it. Outlying rounds therefore remain guessable without handing away
+  // the answer through the map viewport.
+  const center = [
+    (CITY_CENTER[0] + location.lat) / 2,
+    (CITY_CENTER[1] + location.lng) / 2
+  ];
+  const zoom = distance > 18000 ? 9.5 : distance > 9000 ? 10.5 : 11;
+  map.setView(center, zoom);
 }
 
 // Distance -> 0-100 percentage score. Close guesses round up to 100; far guesses decay to 0.
@@ -376,11 +410,14 @@ function loadRound() {
 
   const loc = roundLocations[currentRoundIndex];
   document.getElementById("streetPhoto").src = loc.img;
-  map.setView([62.392, 17.307], 12);
+  frameMapForRound(loc);
   resetZoom();
 
-  const isHardRound = currentRoundIndex === ROUND_COUNT - 1;
+  const isHardRound = roundIsHard(loc, currentRoundIndex);
   document.getElementById("photoPane").classList.toggle("hard-round", isHardRound);
+  const areaHint = document.getElementById("roundAreaHint");
+  areaHint.textContent = `📍 Area: ${roundAreaLabel(loc)}`;
+  areaHint.classList.toggle("visible", !isHardRound && Boolean(roundAreaLabel(loc)));
 
   updateHud();
   startRoundTimer();

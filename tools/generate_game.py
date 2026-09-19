@@ -50,7 +50,13 @@ def haversine_m(lat1, lng1, lat2, lng2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def pick_round_order(unused, count):
+def broad_area(name):
+    area = name.rsplit(",", 1)[-1].strip()
+    area = area.removeprefix("Glebygd ").removesuffix(" tätortsområde").removesuffix(" kommun")
+    return area
+
+
+def pick_round_order(unused, count, date_str):
     """Pick `count` locations from `unused` and order them easy -> hard.
 
     The first round is the most central/closest-to-downtown candidate
@@ -62,13 +68,20 @@ def pick_round_order(unused, count):
         unused, key=lambda loc: haversine_m(*CITY_CENTER, loc["lat"], loc["lng"])
     )
 
+    # Vary the challenge profile by date while keeping it reproducible for
+    # retries/backfills: most days get one hard round, some get two.
+    rng = random.Random(f"{date_str}:hard-round-count")
+    hard_count = rng.randint(1, 2)
+    hardest = by_distance[-hard_count:]
     easiest = by_distance[0]
-    hardest = by_distance[-1]
 
-    remaining_pool = [loc for loc in by_distance if loc is not easiest and loc is not hardest]
-    middle = random.sample(remaining_pool, count - 2)
+    remaining_pool = [loc for loc in by_distance if loc is not easiest and loc not in hardest]
+    middle = rng.sample(remaining_pool, count - 1 - hard_count)
 
-    return [easiest] + middle + [hardest]
+    ordered = [easiest] + middle + hardest
+    for index, location in enumerate(ordered):
+        location["_difficulty"] = "hard" if index >= len(ordered) - hard_count else "standard"
+    return ordered
 
 
 def main():
@@ -129,7 +142,7 @@ def main():
         )
         sys.exit(1)
 
-    chosen = pick_round_order(candidates, ROUND_COUNT)
+    chosen = pick_round_order(candidates, ROUND_COUNT, date_str)
     chosen_ids = {loc["id"] for loc in chosen}
 
     game = {
@@ -141,6 +154,8 @@ def main():
                 "lng": loc["lng"],
                 "imgData": loc["imgData"],
                 "imgExt": loc["imgExt"],
+                "area": broad_area(loc["name"]),
+                "difficulty": loc["_difficulty"],
             }
             for loc in chosen
         ],
