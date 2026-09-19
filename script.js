@@ -677,14 +677,17 @@ async function shareResult() {
     try {
       if (navigator.clipboard && window.ClipboardItem) {
         // Write both the image and the site link as separate clipboard
-        // representations. Apps that accept rich paste (Slack/Discord) will
-        // paste the image; ones that only accept text fall back to the link.
+        // representations. Some apps (Slack) paste both; others (Discord)
+        // always drop the text when an image is also present on the
+        // clipboard — that's a receiving-app limitation we can't fix from
+        // here, so we also offer a separate "Copy Link" button below for
+        // exactly that case.
         const item = new ClipboardItem({
           "image/png": blob,
           "text/plain": new Blob([shareUrl], { type: "text/plain" })
         });
         await navigator.clipboard.write([item]);
-        status.textContent = "Image copied! The site link is included too.";
+        status.textContent = "Image copied! (On Discord, also hit Copy Link — it drops links pasted with images.)";
         return;
       }
       throw new Error("Clipboard image API not supported");
@@ -699,6 +702,22 @@ async function shareResult() {
       status.textContent = "Clipboard copy isn't supported here — downloaded the image instead.";
     }
   }, "image/png");
+}
+
+// Separate, explicit "just the link" copy — needed because Discord (unlike
+// Slack) silently drops any accompanying text/plain clipboard data whenever
+// an image is also on the clipboard, so the link from shareResult() above
+// never shows up there. This is a Discord-side limitation with no
+// JS-side fix, hence the dedicated button.
+async function copyShareLink() {
+  const status = document.getElementById("shareStatus");
+  const shareUrl = shareSiteUrl();
+  try {
+    await navigator.clipboard.writeText(shareUrl);
+    status.textContent = "Link copied!";
+  } catch (err) {
+    status.textContent = `Couldn't copy automatically — here's the link: ${shareUrl}`;
+  }
 }
 
 async function startGame(requestedDate) {
@@ -798,6 +817,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("nextBtn").addEventListener("click", nextRound);
   document.getElementById("restartBtn").addEventListener("click", () => startGame(activeGameDate));
   document.getElementById("shareBtn").addEventListener("click", shareResult);
+  document.getElementById("copyLinkBtn").addEventListener("click", copyShareLink);
   document.getElementById("dateSelect").addEventListener("change", (e) => startGame(e.target.value));
   document.getElementById("viewScoreBtn").addEventListener("click", () => showSavedScoreOverlay(activeGameDate));
   document.getElementById("closeFinalBtn").addEventListener("click", () => {

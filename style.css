@@ -435,6 +435,21 @@ main {
   z-index: 0;
 }
 
+.shareBtnRow {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+#copyLinkBtn {
+  background: #24344a;
+}
+
+#copyLinkBtn:hover {
+  background: #33496a;
+}
+
 #shareBtn::before {
   content: "";
   position: absolute;
