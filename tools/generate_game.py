@@ -3,6 +3,10 @@
 and publish them as a new day's game (data/games/<date>.enc.json). Marks the
 chosen locations as used in the pool so they never repeat.
 
+Rounds are ordered easy -> hard: round 1 is the most central/recognizable
+candidate available, round 5 is the most distant/unusual one (the client
+shows a fire border on the last round). See pick_round_order().
+
 Only locations with verified=true are eligible — this guards against an
 estimated/typo'd coordinate ever reaching a live game. See
 tools/add_location.py (--verified flag) and tools/fetch_kartaview_locations.py
@@ -18,6 +22,7 @@ weekends), but can be run locally/manually too:
 import argparse
 import datetime
 import json
+import math
 import random
 import sys
 from pathlib import Path
@@ -28,6 +33,42 @@ POOL_ENCRYPTED = REPO_ROOT / "data" / "pool.enc.json"
 GAMES_DIR = REPO_ROOT / "data" / "games"
 MANIFEST = REPO_ROOT / "data" / "manifest.json"
 ROUND_COUNT = 5
+
+# Stora Torget, the heart of Sundsvall city centre. Used only to rank
+# candidate locations by "how central" they are, so a game's rounds can be
+# ordered from easy (near the city core, presumably more recognizable) to
+# hard (unusual/outlying) rather than pure random.
+CITY_CENTER = (62.3908, 17.3069)
+
+
+def haversine_m(lat1, lng1, lat2, lng2):
+    r = 6371000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def pick_round_order(unused, count):
+    """Pick `count` locations from `unused` and order them easy -> hard.
+
+    The first round is the most central/closest-to-downtown candidate
+    (presumably the most recognizable, easing players in). The last round
+    is the most distant/unusual candidate available (the "hard" round). The
+    middle rounds are a random sample of whatever's left, in random order.
+    """
+    by_distance = sorted(
+        unused, key=lambda loc: haversine_m(*CITY_CENTER, loc["lat"], loc["lng"])
+    )
+
+    easiest = by_distance[0]
+    hardest = by_distance[-1]
+
+    remaining_pool = [loc for loc in by_distance if loc is not easiest and loc is not hardest]
+    middle = random.sample(remaining_pool, count - 2)
+
+    return [easiest] + middle + [hardest]
 
 
 def main():
@@ -61,7 +102,7 @@ def main():
         )
         sys.exit(1)
 
-    chosen = random.sample(unused, ROUND_COUNT)
+    chosen = pick_round_order(unused, ROUND_COUNT)
     chosen_ids = {loc["id"] for loc in chosen}
 
     game = {

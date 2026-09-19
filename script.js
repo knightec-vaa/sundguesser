@@ -2,16 +2,19 @@
 // Daily games are fetched pre-encrypted from data/games/<date>.enc.json and
 // decrypted server-side during deploy into data/games/<date>.json.
 const ROUND_COUNT = 5;
-const DISTANCE_DECAY_METERS = 800; // controls how quickly score falls off with distance
+const DISTANCE_DECAY_METERS = 450; // controls how quickly score falls off with distance (lower = harder)
 const DISTANCE_SCORE_EXPONENT = 1.3; // >1 sharpens the mid-range falloff (harder, more precise scoring)
-const PERFECT_DISTANCE_METERS = 15; // guesses this close are treated as a perfect 100
+const PERFECT_DISTANCE_METERS = 8; // guesses this close are treated as a perfect 100
 const SCORES_STORAGE_KEY = "sundguesser:scores";
+const ROUND_TIME_SECONDS = 120; // 2 minute time limit per round
 
 let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLayers;
 let activeGameDate = null;
 let manifestCache = null;
 let currentShareSeed = null;
 let currentShareCanvas = null;
+let roundTimerInterval = null;
+let roundTimerRemaining = ROUND_TIME_SECONDS;
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000; // meters
@@ -188,27 +191,79 @@ function loadRound() {
   const loc = roundLocations[currentRoundIndex];
   document.getElementById("streetPhoto").src = loc.img;
   map.setView([62.392, 17.307], 12);
+
+  const isHardRound = currentRoundIndex === ROUND_COUNT - 1;
+  document.getElementById("photoPane").classList.toggle("hard-round", isHardRound);
+
   updateHud();
+  startRoundTimer();
 }
 
-function makeGuess() {
-  if (!guessMarker) return;
-  const loc = roundLocations[currentRoundIndex];
-  const guessLatLng = guessMarker.getLatLng();
-  const distance = haversineDistance(guessLatLng.lat, guessLatLng.lng, loc.lat, loc.lng);
-  const points = distanceToScore(distance);
-  roundScores.push(points);
+function formatTimer(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
+function startRoundTimer() {
+  stopRoundTimer();
+  roundTimerRemaining = ROUND_TIME_SECONDS;
+  updateTimerDisplay();
+  roundTimerInterval = setInterval(() => {
+    roundTimerRemaining--;
+    updateTimerDisplay();
+    if (roundTimerRemaining <= 0) {
+      stopRoundTimer();
+      makeGuess({ timedOut: true });
+    }
+  }, 1000);
+}
+
+function stopRoundTimer() {
+  if (roundTimerInterval) {
+    clearInterval(roundTimerInterval);
+    roundTimerInterval = null;
+  }
+}
+
+function updateTimerDisplay() {
+  const el = document.getElementById("timerInfo");
+  if (!el) return;
+  el.textContent = `⏱ ${formatTimer(Math.max(0, roundTimerRemaining))}`;
+  el.classList.toggle("timer-low", roundTimerRemaining <= 20);
+}
+
+function makeGuess(opts = {}) {
+  const timedOut = opts.timedOut === true;
+  if (!guessMarker && !timedOut) return;
+  stopRoundTimer();
+
+  const loc = roundLocations[currentRoundIndex];
   const actualMarker = L.marker([loc.lat, loc.lng], {
     icon: L.divIcon({ className: "actual-marker", html: "📍", iconSize: [24, 24] })
   }).addTo(map);
-  const line = L.polyline([guessLatLng, [loc.lat, loc.lng]], { color: "red", dashArray: "5,5" }).addTo(map);
-  resultLayers = [actualMarker, line];
-  map.fitBounds(line.getBounds(), { padding: [60, 60] });
+  resultLayers = [actualMarker];
+
+  let points, distText;
+  if (guessMarker) {
+    const guessLatLng = guessMarker.getLatLng();
+    const distance = haversineDistance(guessLatLng.lat, guessLatLng.lng, loc.lat, loc.lng);
+    points = distanceToScore(distance);
+    const line = L.polyline([guessLatLng, [loc.lat, loc.lng]], { color: "red", dashArray: "5,5" }).addTo(map);
+    resultLayers.push(line);
+    map.fitBounds(line.getBounds(), { padding: [60, 60] });
+    distText = distance >= 1000 ? `${(distance / 1000).toFixed(2)} km` : `${Math.round(distance)} m`;
+  } else {
+    // Timed out with no guess placed at all.
+    points = 0;
+    distText = "No guess made — time ran out!";
+    map.setView([loc.lat, loc.lng], 13);
+  }
+  roundScores.push(points);
 
   document.getElementById("resultTitle").textContent = loc.name;
-  const distText = distance >= 1000 ? `${(distance / 1000).toFixed(2)} km` : `${Math.round(distance)} m`;
-  document.getElementById("resultDistance").textContent = `Distance: ${distText}`;
+  document.getElementById("resultDistance").textContent =
+    timedOut && guessMarker ? `⏱ Time's up! Distance: ${distText}` : `Distance: ${distText}`;
 
   const pointsEl = document.getElementById("resultPoints");
   animateScoreCountUp(pointsEl, points, { suffix: ` / 100 ${scoreEmoji(points)}` });
@@ -433,7 +488,9 @@ async function startGame(requestedDate) {
 
     const { locations } = await loadGameForDate(date);
     activeGameDate = date;
-    roundLocations = shuffle(locations);
+    // Order matters: generate_game.py deliberately orders rounds
+    // easy -> medium -> ... -> hard, so no client-side shuffle here.
+    roundLocations = locations;
     currentRoundIndex = 0;
     roundScores = [];
     currentShareSeed = null;

@@ -62,6 +62,14 @@ GRID_POINTS = [
     (62.3450, 17.2900),  # Nacksta
     (62.4000, 17.2400),  # Fläsian / Västermalm
     (62.3800, 17.4000),  # Ortviken
+    # A light sprinkling of neighbouring municipalities for variety. Kept
+    # deliberately sparse relative to the Sundsvall core above so the city
+    # remains the main focus, with just a taste of Timrå/Matfors/Njurunda.
+    (62.4950, 17.3350),  # Timrå centrum
+    (62.4700, 17.3600),  # Timrå / Söråker direction
+    (62.3540, 16.9800),  # Matfors
+    (62.3020, 17.3800),  # Njurunda
+    (62.2850, 17.4100),  # Njurunda / Stavre direction
 ]
 
 MIN_SPACING_METERS = 120  # avoid near-duplicate photos of the same spot
