@@ -3,11 +3,21 @@
 (secrets/locations.json), then re-run tools/build_pool.py to update the
 encrypted, committable copy.
 
+Every location needs a `verified` flag — the daily game generator
+(tools/generate_game.py) will only ever pick from verified locations, so a
+typo'd or estimated coordinate can never end up in a live game. Pass
+--verified to confirm you've personally checked the lat/lng against the
+actual photo (e.g. by dropping a pin on the exact spot in Google Maps /
+OpenStreetMap, or reading real GPS EXIF data). Locations added without
+--verified are saved but won't be drawn until you edit the file (or rerun
+this command with --verified) once you've confirmed them.
+
 Usage:
     python3 tools/add_location.py \\
         --name "Alnö kyrka" \\
         --lat 62.4536 --lng 17.4271 \\
-        --img "https://example.com/photo.jpg"
+        --img "https://example.com/photo.jpg" \\
+        --verified
 """
 import argparse
 import json
@@ -41,6 +51,11 @@ def main():
     parser.add_argument("--lat", required=True, type=float)
     parser.add_argument("--lng", required=True, type=float)
     parser.add_argument("--img", required=True)
+    parser.add_argument(
+        "--verified", action="store_true",
+        help="confirm you've personally checked these coordinates are exact",
+    )
+    parser.add_argument("--source", default="manual", help="provenance tag, e.g. manual/kartaview")
     args = parser.parse_args()
 
     pool = load_pool()
@@ -61,9 +76,16 @@ def main():
         "img": args.img,
         "used": False,
         "usedInGame": None,
+        "source": args.source,
+        "verified": args.verified,
     })
     save_pool(pool)
     print(f"Added '{args.name}' (id={loc_id}). Total pool size: {len(pool)}")
+    if not args.verified:
+        print(
+            "NOTE: saved as UNVERIFIED — the daily generator will skip it until "
+            "you confirm the coordinates and set verified=true (or re-run with --verified)."
+        )
     print("Now run: python3 tools/build_pool.py")
 
 

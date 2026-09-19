@@ -294,6 +294,10 @@ def main():
             "used": False,
             "usedInGame": None,
             "source": "kartaview",
+            # KartaView photos carry real GPS metadata from the capture
+            # device, so — unlike hand-typed/estimated coordinates — these
+            # are trustworthy enough to mark verified automatically.
+            "verified": True,
         }
         new_entries.append(entry)
         print(f"  + {loc_id}: {name} ({lat:.5f},{lng:.5f})\n    {img}")

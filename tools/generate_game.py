@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Pick 5 never-before-used locations from the encrypted pool and publish
-them as a new day's game (data/games/<date>.enc.json). Marks the chosen
-locations as used in the pool so they never repeat.
+"""Pick 5 never-before-used, GPS-verified locations from the encrypted pool
+and publish them as a new day's game (data/games/<date>.enc.json). Marks the
+chosen locations as used in the pool so they never repeat.
+
+Only locations with verified=true are eligible — this guards against an
+estimated/typo'd coordinate ever reaching a live game. See
+tools/add_location.py (--verified flag) and tools/fetch_kartaview_locations.py
+(auto-verified via real GPS metadata) for how locations become verified.
 
 Designed to be run by the GitHub Actions workflow every day (including
 weekends), but can be run locally/manually too:
@@ -47,11 +52,12 @@ def main():
     envelope = json.loads(POOL_ENCRYPTED.read_text())
     pool = decrypt_json(envelope, key)
 
-    unused = [loc for loc in pool if not loc.get("used")]
+    unused = [loc for loc in pool if not loc.get("used") and loc.get("verified") is True]
     if len(unused) < ROUND_COUNT:
         print(
-            f"Not enough unused locations left ({len(unused)} available, "
-            f"{ROUND_COUNT} needed). Add more with tools/add_location.py."
+            f"Not enough unused VERIFIED locations left ({len(unused)} available, "
+            f"{ROUND_COUNT} needed). Add more with tools/add_location.py --verified "
+            f"or tools/fetch_kartaview_locations.py."
         )
         sys.exit(1)
 
