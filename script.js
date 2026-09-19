@@ -21,6 +21,11 @@ let roundTimerRemaining = ROUND_TIME_SECONDS;
 let hotStreak = 0;
 let coldStreak = 0;
 
+// Preloaded once so the share canvas (drawn synchronously) can draw the
+// Sundsvall coat-of-arms icon immediately without waiting on image load.
+const headerIconImg = new Image();
+headerIconImg.src = "favicon.svg";
+
 function haversineDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000; // meters
   const toRad = (d) => (d * Math.PI) / 180;
@@ -421,7 +426,13 @@ function drawShareCanvas() {
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 30px sans-serif";
-  ctx.fillText("🧭 SundGuesser", 28, 50);
+  if (headerIconImg.complete && headerIconImg.naturalWidth > 0) {
+    const iconSize = 34;
+    ctx.drawImage(headerIconImg, 28, 20, iconSize, iconSize * (headerIconImg.naturalHeight / headerIconImg.naturalWidth));
+    ctx.fillText("SundGuesser", 28 + iconSize + 10, 50);
+  } else {
+    ctx.fillText("🧭 SundGuesser", 28, 50);
+  }
 
   ctx.font = "16px sans-serif";
   ctx.fillStyle = "#c9d6e3";

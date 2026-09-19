@@ -22,6 +22,15 @@ header {
 header h1 {
   margin: 0;
   font-size: 1.4rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-icon {
+  height: 1.5em;
+  width: auto;
+  vertical-align: middle;
 }
 
 #hud {
