@@ -11,6 +11,7 @@ let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLaye
 let activeGameDate = null;
 let manifestCache = null;
 let currentShareSeed = null;
+let currentShareCanvas = null;
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000; // meters
@@ -236,10 +237,13 @@ function nextRound() {
     playScoreEffect(finalScore);
 
     renderRoundBreakdown();
-    document.getElementById("finalOverlay").classList.remove("hidden");
 
     const { record, justSaved } = saveFirstScoreIfMissing(activeGameDate, finalScore, roundScores);
     currentShareSeed = record.seed;
+    updateShareCardPreview();
+    updateShareBtnTier(finalScore);
+    document.getElementById("finalOverlay").classList.remove("hidden");
+
     const noteEl = document.getElementById("firstScoreNote");
     noteEl.textContent = justSaved
       ? "Saved as your official score for this day!"
@@ -275,10 +279,32 @@ function showSavedScoreOverlay(date) {
   document.getElementById("finalScore").textContent =
     `Final Score: ${record.score} / 100 ${scoreEmoji(record.score)}`;
   renderRoundBreakdown();
+  updateShareCardPreview();
+  updateShareBtnTier(record.score);
   document.getElementById("firstScoreNote").textContent =
     `Your official score for this day: ${record.score}/100.`;
   document.getElementById("shareStatus").textContent = "";
   document.getElementById("finalOverlay").classList.remove("hidden");
+}
+
+// Renders the share card into the visible #shareCardPreview container (so
+// players see exactly what gets copied) and keeps a reference to that same
+// canvas so shareResult() copies the identical image instead of redrawing.
+function updateShareCardPreview() {
+  currentShareCanvas = drawShareCanvas();
+  const container = document.getElementById("shareCardPreview");
+  if (!container) return;
+  container.innerHTML = "";
+  container.appendChild(currentShareCanvas);
+}
+
+// Swaps the share button's animated border tier to match how good the
+// score was (legendary rainbow down to a barely-moving grayscale ring).
+function updateShareBtnTier(score) {
+  const btn = document.getElementById("shareBtn");
+  if (!btn) return;
+  btn.classList.remove("tier-legendary", "tier-great", "tier-good", "tier-meh", "tier-bad", "tier-terrible");
+  btn.classList.add(`tier-${scoreTier(score)}`);
 }
 
 function drawShareCanvas() {
@@ -353,7 +379,10 @@ function shareSiteUrl() {
 }
 
 async function shareResult() {
-  const canvas = drawShareCanvas();
+  // Reuse the exact canvas already shown in the preview so what gets copied
+  // matches what the player sees; fall back to a fresh render if somehow
+  // the preview hasn't been drawn yet.
+  const canvas = currentShareCanvas || drawShareCanvas();
   const status = document.getElementById("shareStatus");
   const shareUrl = shareSiteUrl();
   canvas.toBlob(async (blob) => {
@@ -368,7 +397,7 @@ async function shareResult() {
           "text/plain": new Blob([shareUrl], { type: "text/plain" })
         });
         await navigator.clipboard.write([item]);
-        status.textContent = `Copied! Paste into Slack/Discord — the link (${shareUrl}) is included too.`;
+        status.textContent = "Image copied! The site link is included too.";
         return;
       }
       throw new Error("Clipboard image API not supported");

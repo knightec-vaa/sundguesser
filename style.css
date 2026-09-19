@@ -101,6 +101,18 @@ main {
   display: none !important;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 #resultOverlay, #finalOverlay {
   position: fixed;
   inset: 0;
@@ -129,6 +141,21 @@ main {
   font-size: 1.1rem;
 }
 
+#shareCardPreview {
+  margin: 12px auto;
+  max-width: 480px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  line-height: 0;
+}
+
+#shareCardPreview canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 #resultBox button, #finalBox button {
   margin-top: 15px;
   padding: 10px 24px;
@@ -143,6 +170,98 @@ main {
 
 #resultBox button:hover, #finalBox button:hover {
   background: #37a86f;
+}
+
+/* --- Share button tiered border/hover effect (depends on final score) ---
+   The legendary tier reuses the exact rainbow gradient recipe from
+   vaaraniemi.se's ".rainbow" class (124deg linear-gradient, same color
+   stops), panned like a scrolling rainbow instead of vaaraniemi's static
+   fill, since here it's an animated border rather than a link background. */
+#shareBtn {
+  position: relative;
+  isolation: isolate;
+  z-index: 0;
+}
+
+#shareBtn::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9px;
+  z-index: -1;
+  background-size: 300% 300%;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+#shareBtn:hover::before {
+  opacity: 1;
+}
+
+@keyframes shareRainbowPan {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@keyframes shareBorderSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* legendary (95+): vaaraniemi.se rainbow, scrolling */
+#shareBtn.tier-legendary::before {
+  background-image: linear-gradient(124deg, #ff2400, #e81d1d, #e8b71d, #e3e81d, #1de840, #1ddde8, #2b1de8, #dd00f3, #dd00f3);
+  filter: saturate(1.2) brightness(1.1);
+}
+
+#shareBtn.tier-legendary:hover::before {
+  animation: shareRainbowPan 2.5s linear infinite;
+}
+
+/* great (80-94): same rainbow, calmer pace */
+#shareBtn.tier-great::before {
+  background-image: linear-gradient(124deg, #ff2400, #e81d1d, #e8b71d, #e3e81d, #1de840, #1ddde8, #2b1de8, #dd00f3, #dd00f3);
+}
+
+#shareBtn.tier-great:hover::before {
+  animation: shareRainbowPan 4.5s linear infinite;
+}
+
+/* good (60-79): cool blue/green sweep, rotating conic ring */
+#shareBtn.tier-good::before {
+  background-image: conic-gradient(from 0deg, #2c8c5c, #37a86f, #3bd4ff, #37a86f, #2c8c5c);
+}
+
+#shareBtn.tier-good:hover::before {
+  animation: shareBorderSpin 3.5s linear infinite;
+}
+
+/* meh (40-59): muted amber/gray sweep, slower */
+#shareBtn.tier-meh::before {
+  background: conic-gradient(from 0deg, #8a7a4a, #bfa25a, #6b6b6b, #bfa25a, #8a7a4a);
+}
+
+#shareBtn.tier-meh:hover::before {
+  animation: shareBorderSpin 5s linear infinite;
+}
+
+/* bad (20-39): dull rust/gray, sluggish */
+#shareBtn.tier-bad::before {
+  background: conic-gradient(from 0deg, #6b3b3b, #555, #6b3b3b);
+}
+
+#shareBtn.tier-bad:hover::before {
+  animation: shareBorderSpin 7s linear infinite;
+  filter: grayscale(0.3);
+}
+
+/* terrible (<20): grayscale, barely moving — matches the 🥀 vibe */
+#shareBtn.tier-terrible::before {
+  background: conic-gradient(from 0deg, #444, #777, #444);
+  filter: grayscale(0.8);
+}
+
+#shareBtn.tier-terrible:hover::before {
+  animation: shareBorderSpin 10s linear infinite;
 }
 
 .actual-marker {

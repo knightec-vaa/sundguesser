@@ -90,6 +90,18 @@ function scoreEmoji(score) {
   return "🥀";
 }
 
+// Same tiers as scoreEmoji, exposed as a CSS-class-friendly name so UI
+// elements (e.g. the share button's animated border) can react to how good
+// the score actually was.
+function scoreTier(score) {
+  if (score >= 95) return "legendary";
+  if (score >= 80) return "great";
+  if (score >= 60) return "good";
+  if (score >= 40) return "meh";
+  if (score >= 20) return "bad";
+  return "terrible";
+}
+
 function renderWeekdayPin(el, dateStr) {
   if (!el || !dateStr) return;
   const info = weekdayInfoForDate(dateStr);
