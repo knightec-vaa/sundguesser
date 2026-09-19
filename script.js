@@ -77,8 +77,9 @@ function roundAreaLabel(location) {
 
 function roundIsHard(location, index) {
   if (location.difficulty) return location.difficulty === "hard";
-  const hardCount = 1 + (hashSeed(`${activeGameDate || "game"}:hard-round-count`) % 2);
-  return index >= roundLocations.length - hardCount;
+  // Legacy game files have no difficulty metadata. Preserve their original
+  // behavior exactly: only the final round received the hard treatment.
+  return index === roundLocations.length - 1;
 }
 
 function frameMapForRound(location) {
