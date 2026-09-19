@@ -608,6 +608,7 @@ function drawShareCanvas() {
   ctx.restore();
 
   ctx.font = "48px sans-serif";
+  ctx.fillStyle = "#ffffff";
   ctx.fillText(scoreEmoji(finalScore), 340, 155);
 
   ctx.font = "16px sans-serif";
