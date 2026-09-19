@@ -15,6 +15,8 @@ const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.4;
 
 let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLayers;
+let roundLocked = false; // true while the result panel is showing, so map
+                          // clicks don't move the guess marker during review
 let activeGameDate = null;
 let manifestCache = null;
 let currentShareSeed = null;
@@ -122,6 +124,7 @@ function initMap() {
   }).addTo(map);
 
   map.on("click", (e) => {
+    if (roundLocked) return;
     if (guessMarker) {
       guessMarker.setLatLng(e.latlng);
     } else {
@@ -326,6 +329,7 @@ function clearResultLayers() {
 
 function loadRound() {
   clearResultLayers();
+  roundLocked = false;
   if (guessMarker) {
     map.removeLayer(guessMarker);
     guessMarker = null;
@@ -383,6 +387,7 @@ function makeGuess(opts = {}) {
   const timedOut = opts.timedOut === true;
   if (!guessMarker && !timedOut) return;
   stopRoundTimer();
+  roundLocked = true;
 
   const loc = roundLocations[currentRoundIndex];
   const actualMarker = L.marker([loc.lat, loc.lng], {
@@ -392,8 +397,9 @@ function makeGuess(opts = {}) {
 
   let points, distText;
   if (guessMarker) {
-    const guessLatLng = guessMarker.getLatLng();
-    const distance = haversineDistance(guessLatLng.lat, guessLatLng.lng, loc.lat, loc.lng);
+    guessMarker.dragging.disable(); // keep it pinned so it doesn't drift away
+    const guessLatLng = guessMarker.getLatLng();          // from the result line while the player is
+    const distance = haversineDistance(guessLatLng.lat, guessLatLng.lng, loc.lat, loc.lng); // reviewing the map
     points = distanceToScore(distance);
     const line = L.polyline([guessLatLng, [loc.lat, loc.lng]], { color: "red", dashArray: "5,5" }).addTo(map);
     resultLayers.push(line);
@@ -416,6 +422,9 @@ function makeGuess(opts = {}) {
   animateScoreCountUp(pointsEl, points, { suffix: ` / 100 ${scoreEmoji(points)}` });
   playScoreEffect(points);
   applyStreakVisuals();
+
+  const isLastRound = currentRoundIndex === ROUND_COUNT - 1;
+  document.getElementById("nextBtn").textContent = isLastRound ? "See Final Score" : "Next Round";
 
   document.getElementById("guessBtn").disabled = true;
   document.getElementById("resultOverlay").classList.remove("hidden");
@@ -648,10 +657,12 @@ function drawShareCanvas() {
   return canvas;
 }
 
-// The plain site URL (no query string) so anyone seeing the shared image
-// knows where to go play, even if only the image itself gets pasted.
+// The site URL including the active game's date as a query param, so anyone
+// who receives the shared image/link (even days later) lands directly on
+// that specific day's game instead of "today" (which may have moved on).
 function shareSiteUrl() {
-  return `${window.location.origin}${window.location.pathname}`.replace(/\/index\.html$/, "/");
+  const base = `${window.location.origin}${window.location.pathname}`.replace(/\/index\.html$/, "/");
+  return activeGameDate ? `${base}?date=${activeGameDate}` : base;
 }
 
 async function shareResult() {

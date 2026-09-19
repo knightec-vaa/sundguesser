@@ -239,7 +239,7 @@ main {
   border: 0;
 }
 
-#resultOverlay, #finalOverlay, #startOverlay {
+#finalOverlay, #startOverlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.7);
@@ -247,6 +247,21 @@ main {
   align-items: center;
   justify-content: center;
   z-index: 1000;
+}
+
+/* The round-result panel intentionally does NOT cover the whole screen
+   (unlike final/start overlays) — it's pinned to the bottom so the map
+   stays fully visible and interactive behind it. That way you can pan/zoom
+   around to see exactly where you guessed vs. the real spot and actually
+   learn from a miss, instead of the result popup blocking the view. */
+#resultOverlay {
+  position: fixed;
+  inset: auto 0 0 0;
+  display: flex;
+  justify-content: center;
+  z-index: 1000;
+  pointer-events: none;
+  padding: 0 16px 16px;
 }
 
 #resultBox, #finalBox, #startBox {
@@ -259,6 +274,12 @@ main {
   position: relative;
 }
 
+#resultBox {
+  pointer-events: auto;
+  padding: 16px 32px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
 #resultBox h2, #finalBox h2, #startBox h2 {
   margin-top: 0;
   color: #2f7feb;
@@ -266,6 +287,22 @@ main {
 
 #resultBox p, #finalBox p, #startBox p {
   font-size: 1.1rem;
+}
+
+#resultBox h2 {
+  font-size: 1.15rem;
+  margin-bottom: 4px;
+}
+
+#resultBox p {
+  font-size: 0.95rem;
+  margin: 2px 0;
+}
+
+.reviewHint {
+  font-size: 0.8rem !important;
+  color: #8fa6bf;
+  margin: 10px 0 !important;
 }
 
 /* --- Start gate (shown before a round begins, so the timer never starts
