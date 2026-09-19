@@ -8,20 +8,36 @@ html, body {
   font-family: "Segoe UI", Arial, sans-serif;
   background: #101820;
   color: #eee;
+  overflow-x: hidden;
+}
+
+/* body is a flex column of header (auto height) + main (fills the rest).
+   Using flex-grow on main rather than a hardcoded "calc(100vh - 58px)"
+   means the header can wrap to two lines (small/mobile screens) without
+   main's height calculation going stale and breaking the panes below. */
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
 }
 
 header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 10px 20px;
   background: #101d33;
   border-bottom: 3px solid #0057b8;
   position: relative;
+  flex-shrink: 0;
 }
 
-/* Echoes the Medelpad coat of arms' blue/red wave bands as a thin accent
-   strip under the header. */
+/* A soft lighter-blue accent strip under the header, echoing the Medelpad
+   coat of arms' wave bands without the harsher red/blue clash of a solid
+   red line. */
 header::after {
   content: "";
   position: absolute;
@@ -29,7 +45,7 @@ header::after {
   right: 0;
   bottom: -3px;
   height: 3px;
-  background: #d40000;
+  background: linear-gradient(90deg, #0057b8, #6fb1ff, #0057b8);
 }
 
 header h1 {
@@ -48,7 +64,8 @@ header h1 {
 
 #hud {
   display: flex;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 10px 20px;
   font-weight: bold;
 }
 
@@ -69,11 +86,14 @@ header h1 {
 
 main {
   display: flex;
-  height: calc(100vh - 58px);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 #photoPane, #mapPane {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   position: relative;
 }
 
@@ -118,6 +138,46 @@ main {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  cursor: zoom-in;
+  transition: transform 0.12s ease-out;
+  touch-action: none;
+}
+
+#photoPane.zoomed #streetPhoto {
+  cursor: grab;
+  transition: none;
+}
+
+#photoPane.zoomed #streetPhoto:active {
+  cursor: grabbing;
+}
+
+.zoom-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+}
+
+.zoom-controls button {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(16, 24, 32, 0.65);
+  color: #eee;
+  font-size: 0.95rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.zoom-controls button:hover {
+  background: rgba(0, 87, 184, 0.85);
 }
 
 #mapPane {
@@ -179,7 +239,7 @@ main {
   border: 0;
 }
 
-#resultOverlay, #finalOverlay {
+#resultOverlay, #finalOverlay, #startOverlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.7);
@@ -189,22 +249,102 @@ main {
   z-index: 1000;
 }
 
-#resultBox, #finalBox {
+#resultBox, #finalBox, #startBox {
   background: #1b2735;
   padding: 30px 40px;
   border-radius: 10px;
   text-align: center;
   border: 2px solid #0057b8;
   min-width: 300px;
+  position: relative;
 }
 
-#resultBox h2, #finalBox h2 {
+#resultBox h2, #finalBox h2, #startBox h2 {
   margin-top: 0;
   color: #2f7feb;
 }
 
-#resultBox p, #finalBox p {
+#resultBox p, #finalBox p, #startBox p {
   font-size: 1.1rem;
+}
+
+/* --- Start gate (shown before a round begins, so the timer never starts
+   until the player is ready and the photo never spoils on load) --- */
+#startBox {
+  max-width: 420px;
+}
+
+#startSubtitle {
+  color: #c9d6e3;
+  font-size: 0.95rem;
+}
+
+#startActions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+.scoreHistoryLabel {
+  font-size: 0.85rem;
+  color: #8fa5bd;
+  margin: 14px 0 6px;
+}
+
+.scoreHistoryEmpty {
+  font-size: 0.9rem;
+  color: #8fa5bd;
+}
+
+.scoreHistoryList {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 6px;
+  max-height: 160px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.scoreHistoryList li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 8px;
+  font-size: 0.9rem;
+  border-radius: 4px;
+}
+
+.scoreHistoryList li:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.scoreHistoryDate {
+  color: #c9d6e3;
+}
+
+.scoreHistoryScore {
+  font-weight: bold;
+}
+
+/* Close (×) button in the top-right of the final score card. */
+.close-btn {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: transparent !important;
+  border: none;
+  color: #8fa5bd !important;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 4px 8px !important;
+  margin-top: 0 !important;
+  line-height: 1;
+}
+
+.close-btn:hover {
+  color: #fff !important;
 }
 
 #shareCardPreview {
@@ -222,7 +362,7 @@ main {
   height: auto;
 }
 
-#resultBox button, #finalBox button {
+#resultBox button, #finalBox button, #startBox button {
   margin-top: 15px;
   padding: 10px 24px;
   font-size: 1rem;
@@ -234,7 +374,7 @@ main {
   cursor: pointer;
 }
 
-#resultBox button:hover, #finalBox button:hover {
+#resultBox button:hover, #finalBox button:hover, #startBox button:hover {
   background: #2f7feb;
 }
 
@@ -607,9 +747,84 @@ body.shake {
 @media (max-width: 800px) {
   main {
     flex-direction: column;
-    height: auto;
   }
+
+  /* flex:1 with min-height:0 on both children splits main's already-defined
+     height 50/50 automatically -- no hardcoded vh needed (which previously
+     fought with the base rule's flex-basis:0% and collapsed both panes to
+     their content size). */
   #photoPane, #mapPane {
-    height: 50vh;
+    flex: 1 1 0;
+  }
+
+  header {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  header h1 {
+    font-size: 1.15rem;
+  }
+
+  #hud {
+    gap: 6px 12px;
+    font-size: 0.85rem;
+  }
+
+  #datePicker {
+    font-size: 0.8rem;
+  }
+
+  #viewScoreBtn {
+    padding: 5px 10px;
+    font-size: 0.8rem;
+  }
+
+  #guessBtn {
+    padding: 12px;
+    font-size: 1rem;
+  }
+
+  #resultBox, #finalBox, #startBox {
+    padding: 20px;
+    min-width: 0;
+    width: min(92vw, 420px);
+    max-height: 88vh;
+    overflow-y: auto;
+  }
+
+  #shareCardPreview {
+    max-width: 100%;
+  }
+
+  .zoom-controls button {
+    width: 36px;
+    height: 36px;
+    font-size: 1.05rem;
+  }
+}
+
+@media (max-width: 420px) {
+  header h1 {
+    font-size: 1rem;
+  }
+
+  .header-icon {
+    height: 1.3em;
+  }
+
+  #hud {
+    font-size: 0.78rem;
+    gap: 5px 10px;
+  }
+
+  #resultBox, #finalBox, #startBox {
+    padding: 16px;
+  }
+
+  #startActions button,
+  #resultBox button,
+  #finalBox button {
+    width: 100%;
   }
 }

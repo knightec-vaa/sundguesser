@@ -10,6 +10,9 @@ const ROUND_TIME_SECONDS = 120; // 2 minute time limit per round
 const HOT_STREAK_SCORE = 95; // score needed on a round to count towards a "hot" streak
 const COLD_STREAK_SCORE = 20; // score at/below which a round counts towards a "cold" streak
 const STREAK_MIN_LENGTH = 2; // rounds in a row needed before any streak effect shows
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 3;
+const ZOOM_STEP = 0.4;
 
 let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLayers;
 let activeGameDate = null;
@@ -20,6 +23,18 @@ let roundTimerInterval = null;
 let roundTimerRemaining = ROUND_TIME_SECONDS;
 let hotStreak = 0;
 let coldStreak = 0;
+
+// Photo zoom/pan state (see setupPhotoZoom()). Reset every new round.
+let zoomScale = 1;
+let panX = 0;
+let panY = 0;
+let zoomDragging = false;
+let zoomDragStartX = 0;
+let zoomDragStartY = 0;
+let zoomDragOriginX = 0;
+let zoomDragOriginY = 0;
+let pinchStartDist = null;
+let pinchStartScale = 1;
 
 // Preloaded once so the share canvas (drawn synchronously) can draw the
 // Sundsvall coat-of-arms icon immediately without waiting on image load.
@@ -116,6 +131,126 @@ function initMap() {
   });
 }
 
+// --- Photo zoom/pan (so small signage/text in the street photo can be read
+// up close) --------------------------------------------------------------
+function touchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+function applyZoomTransform() {
+  const img = document.getElementById("streetPhoto");
+  const pane = document.getElementById("photoPane");
+  img.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomScale})`;
+  pane.classList.toggle("zoomed", zoomScale > 1.001);
+}
+
+function clampPan(pane) {
+  const rect = pane.getBoundingClientRect();
+  const maxX = (rect.width * (zoomScale - 1)) / 2;
+  const maxY = (rect.height * (zoomScale - 1)) / 2;
+  panX = Math.max(-maxX, Math.min(maxX, panX));
+  panY = Math.max(-maxY, Math.min(maxY, panY));
+}
+
+function setZoom(newScale) {
+  const pane = document.getElementById("photoPane");
+  zoomScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newScale));
+  if (zoomScale <= 1.001) {
+    zoomScale = 1;
+    panX = 0;
+    panY = 0;
+  }
+  clampPan(pane);
+  applyZoomTransform();
+}
+
+function resetZoom() {
+  zoomScale = 1;
+  panX = 0;
+  panY = 0;
+  applyZoomTransform();
+}
+
+function setupPhotoZoom() {
+  const pane = document.getElementById("photoPane");
+  const img = document.getElementById("streetPhoto");
+
+  pane.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      setZoom(zoomScale + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+    },
+    { passive: false }
+  );
+
+  pane.addEventListener("dblclick", () => resetZoom());
+
+  img.addEventListener("mousedown", (e) => {
+    if (zoomScale <= 1) return;
+    zoomDragging = true;
+    zoomDragStartX = e.clientX;
+    zoomDragStartY = e.clientY;
+    zoomDragOriginX = panX;
+    zoomDragOriginY = panY;
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!zoomDragging) return;
+    panX = zoomDragOriginX + (e.clientX - zoomDragStartX);
+    panY = zoomDragOriginY + (e.clientY - zoomDragStartY);
+    clampPan(pane);
+    applyZoomTransform();
+  });
+  window.addEventListener("mouseup", () => {
+    zoomDragging = false;
+  });
+
+  img.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches.length === 2) {
+        pinchStartDist = touchDist(e.touches);
+        pinchStartScale = zoomScale;
+      } else if (e.touches.length === 1 && zoomScale > 1) {
+        zoomDragging = true;
+        zoomDragStartX = e.touches[0].clientX;
+        zoomDragStartY = e.touches[0].clientY;
+        zoomDragOriginX = panX;
+        zoomDragOriginY = panY;
+      }
+    },
+    { passive: true }
+  );
+  img.addEventListener(
+    "touchmove",
+    (e) => {
+      if (e.touches.length === 2 && pinchStartDist) {
+        const dist = touchDist(e.touches);
+        setZoom(pinchStartScale * (dist / pinchStartDist));
+        e.preventDefault();
+      } else if (zoomDragging && e.touches.length === 1) {
+        panX = zoomDragOriginX + (e.touches[0].clientX - zoomDragStartX);
+        panY = zoomDragOriginY + (e.touches[0].clientY - zoomDragStartY);
+        clampPan(pane);
+        applyZoomTransform();
+        e.preventDefault();
+      }
+    },
+    { passive: false }
+  );
+  img.addEventListener("touchend", (e) => {
+    if (e.touches.length < 2) pinchStartDist = null;
+    if (e.touches.length === 0) zoomDragging = false;
+  });
+
+  document.getElementById("zoomInBtn").addEventListener("click", () => setZoom(zoomScale + ZOOM_STEP));
+  document.getElementById("zoomOutBtn").addEventListener("click", () => setZoom(zoomScale - ZOOM_STEP));
+  document.getElementById("zoomResetBtn").addEventListener("click", () => resetZoom());
+}
+
 function showFatalError(message) {
   const pane = document.getElementById("photoPane");
   pane.innerHTML = `<div class="fatalError">${message}</div>`;
@@ -201,6 +336,7 @@ function loadRound() {
   const loc = roundLocations[currentRoundIndex];
   document.getElementById("streetPhoto").src = loc.img;
   map.setView([62.392, 17.307], 12);
+  resetZoom();
 
   const isHardRound = currentRoundIndex === ROUND_COUNT - 1;
   document.getElementById("photoPane").classList.toggle("hard-round", isHardRound);
@@ -421,9 +557,12 @@ function drawShareCanvas() {
   const ctx = canvas.getContext("2d");
 
   const seed = typeof currentShareSeed === "number" ? currentShareSeed : hashSeed(activeGameDate || "sundguesser");
-  const theme = themeForSeed(seed);
+  const theme = themeForScore(finalScoreValue(), seed);
   paintShareBackground(ctx, theme, W, H);
 
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
+  ctx.shadowBlur = 6;
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 30px sans-serif";
   if (headerIconImg.complete && headerIconImg.naturalWidth > 0) {
@@ -433,6 +572,7 @@ function drawShareCanvas() {
   } else {
     ctx.fillText("🧭 SundGuesser", 28, 50);
   }
+  ctx.restore();
 
   ctx.font = "16px sans-serif";
   ctx.fillStyle = "#c9d6e3";
@@ -452,10 +592,21 @@ function drawShareCanvas() {
     ctx.textAlign = "left";
   }
 
+  // A translucent dark panel behind the big score number keeps it legible
+  // no matter how bright/light the theme is (e.g. gold-on-gold, or the
+  // silver stripe in the "flagg" theme).
+  const finalScore = finalScoreValue();
+  drawRoundedRect(ctx, 20, 96, 300, 78, 12);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
+  ctx.fill();
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.6)";
+  ctx.shadowBlur = 10;
   ctx.font = "bold 72px sans-serif";
   ctx.fillStyle = "#ffd166";
-  const finalScore = finalScoreValue();
   ctx.fillText(`${finalScore}/100`, 28, 165);
+  ctx.restore();
 
   ctx.font = "48px sans-serif";
   ctx.fillText(scoreEmoji(finalScore), 340, 155);
@@ -465,7 +616,7 @@ function drawShareCanvas() {
   roundScores.forEach((s, i) => {
     const x = 28 + i * 112;
     const y = 210;
-    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.fillStyle = "rgba(0,0,0,0.32)";
     ctx.fillRect(x, y, 96, 70);
     ctx.fillStyle = "#ffffff";
     ctx.font = "13px sans-serif";
@@ -475,7 +626,7 @@ function drawShareCanvas() {
   });
 
   ctx.font = "13px sans-serif";
-  ctx.fillStyle = "#8fa5bd";
+  ctx.fillStyle = "#c9d6e3";
   ctx.fillText("Can you beat this score?", 28, H - 18);
   ctx.textAlign = "right";
   ctx.fillText(shareSiteUrl(), W - 28, H - 18);
@@ -527,7 +678,10 @@ async function shareResult() {
 }
 
 async function startGame(requestedDate) {
+  stopRoundTimer();
   document.getElementById("finalOverlay").classList.add("hidden");
+  document.getElementById("resultOverlay").classList.add("hidden");
+  document.getElementById("startOverlay").classList.add("hidden");
   document.getElementById("shareStatus").textContent = "";
   const noteEl = document.getElementById("firstScoreNote");
   if (noteEl) noteEl.textContent = "";
@@ -554,15 +708,67 @@ async function startGame(requestedDate) {
     coldStreak = 0;
     currentShareSeed = null;
     updateHud();
-    loadRound();
+    // Don't jump straight into round 1 (which would both spoil the photo
+    // and silently start the 2-minute timer) — show a start gate first so
+    // the player explicitly opts in to starting the clock.
+    showStartGate();
   } catch (err) {
     console.error(err);
     showFatalError(err.message || "Failed to load the game.");
   }
 }
 
+// Renders a compact list of past played days (most recent first) so players
+// can see their history without it spoiling anything about today's game.
+function renderScoreHistory() {
+  const container = document.getElementById("scoreHistory");
+  if (!container) return;
+  const saved = loadSavedScores();
+  const dates = Object.keys(saved).sort().reverse().slice(0, 7);
+  if (dates.length === 0) {
+    container.innerHTML = '<p class="scoreHistoryEmpty">No games played yet — good luck!</p>';
+    return;
+  }
+  const items = dates
+    .map((d) => {
+      const rec = saved[d];
+      return `<li><span class="scoreHistoryDate">${d}</span><span class="scoreHistoryScore">${rec.score}/100 ${scoreEmoji(rec.score)}</span></li>`;
+    })
+    .join("");
+  container.innerHTML = `<p class="scoreHistoryLabel">Your recent scores</p><ul class="scoreHistoryList">${items}</ul>`;
+}
+
+// The gate shown before a round starts: either "ready to play" (fresh game,
+// timer hasn't started) or, if this day was already completed, an option
+// to replay or just re-view the saved score — either way nothing about the
+// round starts (photo isn't loaded, timer isn't running) until the player
+// explicitly presses a button here.
+function showStartGate() {
+  const saved = getSavedScore(activeGameDate);
+  const title = document.getElementById("startTitle");
+  const subtitle = document.getElementById("startSubtitle");
+  const viewBtn = document.getElementById("startViewScoreBtn");
+  const playBtn = document.getElementById("startPlayBtn");
+
+  if (saved) {
+    title.textContent = "Already played today's game!";
+    subtitle.textContent = `Your recorded score was ${saved.score}/100. You can replay for fun (it won't overwrite your official score), or view your saved result.`;
+    playBtn.textContent = "🔁 Play Again";
+    viewBtn.classList.remove("hidden");
+  } else {
+    title.textContent = "Ready to play?";
+    subtitle.textContent = "5 rounds, 2 minutes each — the clock starts the moment you press Start.";
+    playBtn.textContent = "▶ Start Game";
+    viewBtn.classList.add("hidden");
+  }
+
+  renderScoreHistory();
+  document.getElementById("startOverlay").classList.remove("hidden");
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initMap();
+  setupPhotoZoom();
   startGame(getDateFromUrl());
   document.getElementById("guessBtn").addEventListener("click", makeGuess);
   document.getElementById("nextBtn").addEventListener("click", nextRound);
@@ -570,4 +776,15 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("shareBtn").addEventListener("click", shareResult);
   document.getElementById("dateSelect").addEventListener("change", (e) => startGame(e.target.value));
   document.getElementById("viewScoreBtn").addEventListener("click", () => showSavedScoreOverlay(activeGameDate));
+  document.getElementById("closeFinalBtn").addEventListener("click", () => {
+    document.getElementById("finalOverlay").classList.add("hidden");
+  });
+  document.getElementById("startPlayBtn").addEventListener("click", () => {
+    document.getElementById("startOverlay").classList.add("hidden");
+    loadRound();
+  });
+  document.getElementById("startViewScoreBtn").addEventListener("click", () => {
+    document.getElementById("startOverlay").classList.add("hidden");
+    showSavedScoreOverlay(activeGameDate);
+  });
 });

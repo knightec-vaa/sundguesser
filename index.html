@@ -3,7 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SundGuesser</title>
+<title>SundGuesser — Guess the location in Sundsvall &amp; Medelpad</title>
+<meta name="description" content="A free daily geography guessing game set entirely around Sundsvall and Medelpad, Sweden. Look at a real street-level photo, drop your pin on the map, and see how close you get. New rounds every weekday.">
+<meta name="theme-color" content="#101d33">
+<link rel="canonical" href="https://sundguesser.vaaraniemi.se/">
+
+<!-- Open Graph / Facebook / Slack / Discord link previews -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sundguesser.vaaraniemi.se/">
+<meta property="og:title" content="SundGuesser — Guess the location in Sundsvall &amp; Medelpad">
+<meta property="og:description" content="A free daily geography guessing game set entirely around Sundsvall and Medelpad, Sweden. Look at a real street-level photo, drop your pin on the map, and see how close you get.">
+<meta property="og:image" content="https://sundguesser.vaaraniemi.se/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+
+<!-- Twitter/X card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SundGuesser — Guess the location in Sundsvall &amp; Medelpad">
+<meta name="twitter:description" content="A free daily geography guessing game set entirely around Sundsvall and Medelpad, Sweden. Look at a real street-level photo, drop your pin on the map, and see how close you get.">
+<meta name="twitter:image" content="https://sundguesser.vaaraniemi.se/og-image.jpg">
+
 <!-- Favicon: official coat of arms of the Medelpad landskap (province), by Lokal_Profil
      (Wikimedia Commons, CC BY-SA 2.5) https://commons.wikimedia.org/wiki/File:Medelpad_vapen.svg -->
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -29,6 +48,11 @@
 <main>
   <div id="photoPane">
     <span id="hardRoundBadge" class="hard-round-badge">🔥 Hard Round</span>
+    <div id="zoomControls" class="zoom-controls">
+      <button id="zoomInBtn" title="Zoom in">➕</button>
+      <button id="zoomOutBtn" title="Zoom out">➖</button>
+      <button id="zoomResetBtn" title="Reset zoom">⤾</button>
+    </div>
     <img id="streetPhoto" src="" alt="Guess this location in Sundsvall">
   </div>
   <div id="mapPane">
@@ -36,6 +60,18 @@
     <button id="guessBtn" disabled>Make Guess</button>
   </div>
 </main>
+
+<div id="startOverlay" class="hidden">
+  <div id="startBox">
+    <h2 id="startTitle">Ready to play?</h2>
+    <p id="startSubtitle">5 rounds, 2 minutes each — the clock starts the moment you press Start.</p>
+    <div id="scoreHistory"></div>
+    <div id="startActions">
+      <button id="startPlayBtn">▶ Start Game</button>
+      <button id="startViewScoreBtn" class="hidden">👀 View My Score</button>
+    </div>
+  </div>
+</div>
 
 <div id="resultOverlay" class="hidden">
   <div id="resultBox">
@@ -49,6 +85,7 @@
 
 <div id="finalOverlay" class="hidden">
   <div id="finalBox">
+    <button id="closeFinalBtn" class="close-btn" title="Close">✕</button>
     <h2>Game Over!</h2>
     <div id="shareCardPreview"></div>
     <p id="finalScore" class="sr-only"></p>

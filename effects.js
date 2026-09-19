@@ -144,21 +144,24 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
 }
 
 // --- Share-card background variety ---------------------------------------
-// A small palette of aesthetically-matched gradients plus one "rainbow" one
-// (a nod to vaaraniemi.se's old rainbow banner). Picked deterministically
-// from a per-score seed so a given completed score always redraws the same
-// way, but different people/days end up with visible variety. Recolored to
+// A small palette of aesthetically-matched gradients, plus a couple of
+// score-exclusive special ones (a shiny gold theme for 95+, and the
+// vaaraniemi.se rainbow reserved for the 80-94 "great" tier). Recolored to
 // echo the Medelpad landskap coat of arms (deep blue, vivid blue, red,
-// silver/steel), plus one rainbow easter-egg theme for legendary scores.
+// silver/steel). Regular (non-tiered) themes are still picked
+// deterministically from a per-score seed so a given completed score always
+// redraws the same way, but different people/days see some variety.
 const SHARE_THEMES = [
   { name: "medelpad", stops: ["#003d8f", "#0057b8"] },
   { name: "vagor", stops: ["#001c3d", "#003d8f", "#0057b8"] },
-  { name: "rostrod", stops: ["#7a0000", "#d40000"] },
-  { name: "silverskold", stops: ["#334155", "#7fc4ff"] },
-  { name: "flagg", stops: ["#003d8f", "#eeeeee", "#d40000"] },
-  { name: "djuphav", stops: ["#00142e", "#00316b"] },
-  { name: "rainbow", rainbow: true }
+  { name: "flagg", stops: ["#003d8f", "#eeeeee", "#d40000"] }
 ];
+
+const SHARE_THEME_SILVER = { name: "silverskold", stops: ["#334155", "#7fc4ff"] };
+const SHARE_THEME_RED = { name: "rostrod", stops: ["#7a0000", "#d40000"] };
+const SHARE_THEME_DARK = { name: "djuphav", stops: ["#00142e", "#00316b"] };
+const SHARE_THEME_RAINBOW = { name: "rainbow", rainbow: true };
+const SHARE_THEME_GOLD = { name: "aurum", gold: true };
 
 // Simple deterministic string hash (djb2-ish) -> non-negative int.
 function hashSeed(str) {
@@ -169,17 +172,31 @@ function hashSeed(str) {
   return Math.abs(h | 0);
 }
 
-function themeForSeed(seed) {
-  const idx = Math.abs(seed) % SHARE_THEMES.length;
-  return SHARE_THEMES[idx];
+// Picks the share-card background theme based on the final score's tier —
+// a shiny gold theme is exclusive to 95+, the rainbow easter-egg is
+// exclusive to the 80-94 "great" tier, and lower tiers get progressively
+// cooler/duller Medelpad-family colors. Within the broad "good" tier a
+// per-seed pick still gives some day-to-day variety.
+function themeForScore(score, seed) {
+  if (score >= 95) return SHARE_THEME_GOLD;
+  if (score >= 80) return SHARE_THEME_RAINBOW;
+  if (score >= 60) return SHARE_THEMES[Math.abs(seed) % SHARE_THEMES.length];
+  if (score >= 40) return SHARE_THEME_SILVER;
+  if (score >= 20) return SHARE_THEME_RED;
+  return SHARE_THEME_DARK;
 }
 
 // Fills the canvas background with the given theme's gradient, then applies
-// a subtle dark scrim so white text stays readable on lighter themes too.
-// `theme.stops` can be any length (2+) — evenly distributed along the
-// gradient — to support both simple 2-color themes and the "flagg"/"vagor"
-// 3-stop ones.
+// a dark scrim so white text stays readable regardless of theme. `theme.
+// stops` can be any length (2+) — evenly distributed along the gradient —
+// to support both simple 2-color themes and the "flagg"/"vagor" 3-stop
+// ones. The gold theme gets a dedicated shiny/diagonal-shine treatment
+// instead of a plain gradient.
 function paintShareBackground(ctx, theme, W, H) {
+  if (theme.gold) {
+    paintGoldShareBackground(ctx, W, H);
+    return;
+  }
   const grad = ctx.createLinearGradient(0, 0, W, H);
   if (theme.rainbow) {
     const hues = [0, 45, 90, 150, 210, 270, 330];
@@ -189,7 +206,40 @@ function paintShareBackground(ctx, theme, W, H) {
   }
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+  // Slightly heavier scrim on the rainbow theme since its hues swing bright
+  // enough to fight with white text; other themes are already darker.
+  ctx.fillStyle = theme.rainbow ? "rgba(0, 0, 0, 0.42)" : "rgba(0, 0, 0, 0.35)";
+  ctx.fillRect(0, 0, W, H);
+}
+
+// A dedicated "shiny gold" background reserved for 95+ scores: a warm
+// gold/bronze gradient with a few diagonal light-sweep streaks (drawn as
+// static translucent bands, evoking a metallic shine on a single frame),
+// then a dark scrim so text still reads clearly on top.
+function paintGoldShareBackground(ctx, W, H) {
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, "#3d2c00");
+  grad.addColorStop(0.5, "#caa32c");
+  grad.addColorStop(1, "#3d2c00");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = "#fffbe6";
+  const streakWidth = 26;
+  for (let x = -H; x < W + H; x += 70) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + streakWidth, 0);
+    ctx.lineTo(x + streakWidth - H, H);
+    ctx.lineTo(x - H, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
   ctx.fillRect(0, 0, W, H);
 }
 
