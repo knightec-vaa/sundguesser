@@ -94,15 +94,34 @@ def main():
     pool = decrypt_json(envelope, key)
 
     unused = [loc for loc in pool if not loc.get("used") and loc.get("verified") is True]
-    if len(unused) < ROUND_COUNT:
-        print(
-            f"Not enough unused VERIFIED locations left ({len(unused)} available, "
-            f"{ROUND_COUNT} needed). Add more with tools/add_location.py --verified "
-            f"or tools/fetch_kartaview_locations.py."
-        )
-        sys.exit(1)
 
-    missing_images = [loc["id"] for loc in unused if not loc.get("imgData")]
+    reused = False
+    if len(unused) < ROUND_COUNT:
+        # Not enough fresh locations (fetch-locations.yml hasn't run yet this
+        # week, or it failed) — fall back to reusing already-used verified
+        # locations rather than failing outright. Prefer the ones that were
+        # used longest ago (oldest usedInGame date) so repeats are as spread
+        # out as possible, and top up with the unused ones we do have.
+        already_used = [loc for loc in pool if loc.get("used") and loc.get("verified") is True]
+        already_used.sort(key=lambda loc: loc.get("usedInGame") or "")
+        needed = ROUND_COUNT - len(unused)
+        if len(already_used) < needed:
+            print(
+                f"Not enough verified locations at all ({len(unused)} unused + "
+                f"{len(already_used)} reusable), even allowing reuse. Add more with "
+                f"tools/add_location.py --verified or tools/fetch_kartaview_locations.py."
+            )
+            sys.exit(1)
+        print(
+            f"Only {len(unused)} unused verified location(s) available — reusing "
+            f"{needed} previously-used location(s) to fill out today's game."
+        )
+        candidates = unused + already_used[:needed]
+        reused = True
+    else:
+        candidates = unused
+
+    missing_images = [loc["id"] for loc in candidates if not loc.get("imgData")]
     if missing_images:
         print(
             f"{len(missing_images)} verified location(s) are missing self-hosted image "
@@ -110,7 +129,7 @@ def main():
         )
         sys.exit(1)
 
-    chosen = pick_round_order(unused, ROUND_COUNT)
+    chosen = pick_round_order(candidates, ROUND_COUNT)
     chosen_ids = {loc["id"] for loc in chosen}
 
     game = {
@@ -146,7 +165,10 @@ def main():
     MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n")
 
     print(f"Generated game for {date_str} using locations: {[l['name'] for l in chosen]}")
-    print(f"Remaining unused locations in pool: {len(unused) - ROUND_COUNT}")
+    if reused:
+        print("Note: today's game reused some previously-used locations (pool was running low).")
+    remaining_unused = len([loc for loc in pool if not loc.get("used") and loc.get("verified") is True])
+    print(f"Remaining unused locations in pool: {remaining_unused}")
 
 
 if __name__ == "__main__":

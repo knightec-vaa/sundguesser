@@ -2,8 +2,13 @@ name: Generate daily game
 
 on:
   schedule:
-    # 06:00 UTC, every day (including weekends).
-    - cron: "0 6 * * *"
+    # 06:00 Europe/Stockholm, every day (including weekends). GitHub Actions
+    # cron is always UTC and has no timezone support, so we schedule both
+    # the summer (CEST, UTC+2) and winter (CET, UTC+1) UTC equivalents and
+    # let the "Check it's actually 6am Stockholm time" step below no-op the
+    # run that lands on the wrong side of the DST switch.
+    - cron: "0 4 * * *"
+    - cron: "0 5 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -15,19 +20,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check it's actually 6am Stockholm time
+        if: github.event_name == 'schedule'
+        run: |
+          hour=$(TZ=Europe/Stockholm date +%H)
+          if [ "$hour" != "06" ]; then
+            echo "Not 6am in Stockholm right now (it's ${hour}:00 there), skipping this DST-shadow run."
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          fi
+
       - uses: actions/setup-python@v5
+        if: env.SKIP != 'true'
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: env.SKIP != 'true'
         run: pip install cryptography
 
       - name: Generate today's game
+        if: env.SKIP != 'true'
         env:
           LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
         run: python3 tools/generate_game.py
 
       - name: Commit and push new game data
+        if: env.SKIP != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
