@@ -3,6 +3,10 @@
 (secrets/locations.json), then re-run tools/build_pool.py to update the
 encrypted, committable copy.
 
+Downloads and compresses the photo at --img immediately (see
+tools/image_utils.py) so it's self-hosted from the repo at deploy time
+instead of hotlinked — pass --img either a URL or a local file path.
+
 Every location needs a `verified` flag — the daily game generator
 (tools/generate_game.py) will only ever pick from verified locations, so a
 typo'd or estimated coordinate can never end up in a live game. Pass
@@ -23,8 +27,10 @@ import argparse
 import json
 import re
 import sys
+from pathlib import Path
 
 from crypto_lib import SECRETS_DIR
+from image_utils import download_bytes, fetch_and_compress
 
 POOL_PLAINTEXT = SECRETS_DIR / "locations.json"
 
@@ -68,11 +74,21 @@ def main():
         loc_id = f"{base_id}-{suffix}"
         suffix += 1
 
+    # --img may be a URL or a local file path — either way we download/read
+    # it once, compress it, and store the bytes so the game is self-hosted.
+    if re.match(r"^https?://", args.img):
+        raw = download_bytes(args.img)
+    else:
+        raw = Path(args.img).read_bytes()
+    img_data, img_ext = fetch_and_compress(args.img, raw=raw)
+
     pool.append({
         "id": loc_id,
         "name": args.name,
         "lat": args.lat,
         "lng": args.lng,
+        "imgData": img_data,
+        "imgExt": img_ext,
         "img": args.img,
         "used": False,
         "usedInGame": None,

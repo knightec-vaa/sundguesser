@@ -102,13 +102,27 @@ def main():
         )
         sys.exit(1)
 
+    missing_images = [loc["id"] for loc in unused if not loc.get("imgData")]
+    if missing_images:
+        print(
+            f"{len(missing_images)} verified location(s) are missing self-hosted image "
+            f"data (imgData): {missing_images}. Run tools/backfill_images.py first."
+        )
+        sys.exit(1)
+
     chosen = pick_round_order(unused, ROUND_COUNT)
     chosen_ids = {loc["id"] for loc in chosen}
 
     game = {
         "date": date_str,
         "locations": [
-            {"name": loc["name"], "lat": loc["lat"], "lng": loc["lng"], "img": loc["img"]}
+            {
+                "name": loc["name"],
+                "lat": loc["lat"],
+                "lng": loc["lng"],
+                "imgData": loc["imgData"],
+                "imgExt": loc["imgExt"],
+            }
             for loc in chosen
         ],
     }

@@ -5,8 +5,12 @@ no-API-key street-level imagery service with real GPS-tagged photos.
 Queries a grid of points across Sundsvall, picks well-spaced candidate
 photos, reverse-geocodes a human-readable name via OpenStreetMap Nominatim,
 runs a best-effort automated quality gate (rejects corrupt/blank images and
-candidates with no resolvable road name), and appends survivors to
-secrets/locations.json (the plaintext master pool).
+candidates with no resolvable road name), downloads and compresses each
+surviving photo (see tools/image_utils.py), and appends the result to
+secrets/locations.json (the plaintext master pool) with the image bytes
+embedded as base64 (imgData/imgExt) — this is what actually gets served to
+players (self-hosted from the repo, not hotlinked), so the game keeps
+working even if KartaView is ever slow/down/reorganized.
 
 This supplements (does not replace) manually curated locations. Note: the
 automated quality gate can't judge whether a photo is a *visually
@@ -28,6 +32,7 @@ import urllib.error
 import urllib.request
 
 from crypto_lib import REPO_ROOT, SECRETS_DIR
+from image_utils import fetch_and_compress
 
 POOL_PLAINTEXT = SECRETS_DIR / "locations.json"
 REJECTED_FILE = REPO_ROOT / "data" / "rejected_kartaview.json"
@@ -143,28 +148,34 @@ def image_url(photo):
     return photo.get("fileurlLTh") or photo.get("fileurl", "").replace("{{sizeprefix}}", "lth")
 
 
-def looks_reasonable(img_url):
-    """Best-effort automated quality gate: reject images that are corrupt,
-    truncated, or near-blank (fog/glare/sky-only shots with no useful
-    landmarks). Not a substitute for human review, but good enough to run
-    unattended. If Pillow isn't available, skip the check (accept everything).
+def fetch_and_check_image(img_url):
+    """Downloads the image once and returns (raw_bytes, ok) — ok is False if
+    the image is corrupt/truncated/near-blank (fog/glare/sky-only shots with
+    no useful landmarks) or couldn't be downloaded. Returning the raw bytes
+    alongside the verdict lets the caller reuse the same download to build
+    the self-hosted, compressed copy instead of fetching twice. If Pillow
+    isn't available, skips the quality check (accepts anything downloadable).
     """
+    try:
+        raw = urllib.request.urlopen(
+            urllib.request.Request(img_url, headers={"User-Agent": USER_AGENT}), timeout=20
+        ).read()
+    except Exception:
+        return None, False
+
     try:
         from PIL import Image, ImageStat
     except ImportError:
-        return True
+        return raw, True
 
     try:
-        req = urllib.request.Request(img_url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            raw = resp.read()
         img = Image.open(io.BytesIO(raw))
         img.verify()
         img = Image.open(io.BytesIO(raw)).convert("L").resize((160, 90))
         stddev = ImageStat.Stat(img).stddev[0]
-        return stddev >= MIN_CONTRAST_STDDEV
+        return raw, stddev >= MIN_CONTRAST_STDDEV
     except Exception:
-        return False
+        return raw, False
 
 
 SWEDISH_TRANSLIT = str.maketrans({"å": "a", "ä": "a", "ö": "o", "é": "e", "ü": "u"})
@@ -289,8 +300,17 @@ def main():
             continue
         name = name or "Sundsvall"
 
-        if not args.skip_image_check and not looks_reasonable(img):
-            print(f"  - skip (failed image quality check): {name} ({lat:.5f},{lng:.5f})")
+        raw_bytes = None
+        if not args.skip_image_check:
+            raw_bytes, ok = fetch_and_check_image(img)
+            if not ok:
+                print(f"  - skip (failed image quality check): {name} ({lat:.5f},{lng:.5f})")
+                continue
+
+        try:
+            img_data, img_ext = fetch_and_compress(img, raw=raw_bytes)
+        except Exception as exc:
+            print(f"  - skip (failed to download/compress image): {name} ({exc})")
             continue
 
         known_coords.append((lat, lng))
@@ -308,6 +328,12 @@ def main():
             "name": name,
             "lat": round(lat, 6),
             "lng": round(lng, 6),
+            # Self-hosted, compressed copy of the photo — this is what the
+            # game actually serves (see tools/decrypt_for_deploy.py). "img"
+            # is kept only as provenance/audit metadata, never read by the
+            # client.
+            "imgData": img_data,
+            "imgExt": img_ext,
             "img": img,
             "used": False,
             "usedInGame": None,
