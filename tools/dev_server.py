@@ -17,7 +17,10 @@ from crypto_lib import REPO_ROOT
 from decrypt_for_deploy import decrypt_all_games
 
 DEVDIST = REPO_ROOT / ".devdist"
-SITE_FILES = ["index.html", "style.css", "script.js", "effects.js", "favicon.svg"]
+SITE_FILES = [
+    "index.html", "style.css", "script.js", "effects.js", "favicon.svg",
+    "og-image-square.jpg", "robots.txt", "sitemap.xml",
+]
 
 
 def build_devdist():
