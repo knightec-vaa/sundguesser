@@ -2,9 +2,8 @@ name: Generate daily game
 
 on:
   schedule:
-    # 06:00 UTC, Monday-Friday only. GitHub Actions cron always fires; the
-    # script itself also guards against weekends as a safety net.
-    - cron: "0 6 * * 1-5"
+    # 06:00 UTC, every day (including weekends).
+    - cron: "0 6 * * *"
   workflow_dispatch: {}
 
 permissions:

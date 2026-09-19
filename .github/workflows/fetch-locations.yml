@@ -1,0 +1,56 @@
+name: Fetch new locations
+
+on:
+  schedule:
+    # 05:00 UTC every Sunday — grows the location pool gradually.
+    - cron: "0 5 * * 0"
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "How many new locations to try to add"
+        required: false
+        default: "10"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install cryptography Pillow
+
+      - name: Decrypt current pool
+        env:
+          LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
+        run: python3 tools/decrypt_pool.py
+
+      - name: Fetch new KartaView locations
+        env:
+          LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
+        run: |
+          python3 tools/fetch_kartaview_locations.py --count "${{ github.event.inputs.count || '10' }}"
+
+      - name: Re-encrypt pool
+        env:
+          LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
+        run: python3 tools/build_pool.py
+
+      - name: Commit and push new locations
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/pool.enc.json
+          if git diff --cached --quiet; then
+            echo "No new locations found this run."
+          else
+            git commit -m "chore: auto-fetch new locations from KartaView"
+            git push
+          fi

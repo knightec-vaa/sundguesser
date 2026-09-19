@@ -4,30 +4,44 @@ no-API-key street-level imagery service with real GPS-tagged photos.
 
 Queries a grid of points across Sundsvall, picks well-spaced candidate
 photos, reverse-geocodes a human-readable name via OpenStreetMap Nominatim,
-and appends them to secrets/locations.json (the plaintext master pool).
+runs a best-effort automated quality gate (rejects corrupt/blank images and
+candidates with no resolvable road name), and appends survivors to
+secrets/locations.json (the plaintext master pool).
 
-This supplements (does not replace) manually curated locations.
+This supplements (does not replace) manually curated locations. Note: the
+automated quality gate can't judge whether a photo is a *visually
+interesting* landmark vs. a boring stretch of road — that needs a human or a
+vision model — so it optimizes for "not broken" rather than "great photo".
+Run by .github/workflows/fetch-locations.yml on a schedule; also runnable
+locally.
 
 Usage:
     python3 tools/fetch_kartaview_locations.py --count 30
     python3 tools/build_pool.py   # re-encrypt after reviewing additions
 """
 import argparse
+import io
 import json
 import math
 import time
 import urllib.error
 import urllib.request
 
-from crypto_lib import SECRETS_DIR
+from crypto_lib import REPO_ROOT, SECRETS_DIR
 
 POOL_PLAINTEXT = SECRETS_DIR / "locations.json"
+REJECTED_FILE = REPO_ROOT / "data" / "rejected_kartaview.json"
 
 KARTAVIEW_API = "https://api.openstreetcam.org/2.0/photo/"
 NOMINATIM_API = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "SundGuesser/1.0 (lunch-time geoguesser prototype)"
 
-# Grid of query points spread across central/greater Sundsvall.
+MIN_CONTRAST_STDDEV = 18  # rejects near-blank/foggy/corrupt images
+
+# Grid of query points spread across central/greater Sundsvall. Deliberately
+# wider than just the city core so repeated automated runs (see the
+# fetch-locations workflow) have new ground to explore over time instead of
+# immediately re-finding the same handful of central photos.
 GRID_POINTS = [
     (62.3908, 17.3069), (62.3925, 17.3055), (62.3880, 17.3100),
     (62.3950, 17.2950), (62.3860, 17.3150), (62.3800, 17.2800),
@@ -37,6 +51,17 @@ GRID_POINTS = [
     (62.3970, 17.2900), (62.3780, 17.3000), (62.3900, 17.3250),
     (62.3850, 17.2850), (62.4020, 17.3100), (62.3760, 17.2900),
     (62.3930, 17.3200), (62.3810, 17.3120), (62.3980, 17.3300),
+    # Greater Sundsvall / outer districts.
+    (62.4536, 17.4271),  # Alnö
+    (62.3600, 17.2600),  # Skönsberg / Sidsjön
+    (62.4100, 17.2600),  # Skönsmon
+    (62.3700, 17.3600),  # Bergsåker
+    (62.4200, 17.3500),  # Njurundabommen direction
+    (62.3550, 17.3200),  # Korsta
+    (62.4300, 17.2900),  # Granloholm
+    (62.3450, 17.2900),  # Nacksta
+    (62.4000, 17.2400),  # Fläsian / Västermalm
+    (62.3800, 17.4000),  # Ortviken
 ]
 
 MIN_SPACING_METERS = 120  # avoid near-duplicate photos of the same spot
@@ -67,22 +92,61 @@ def query_kartaview(lat, lng, radius=300):
 
 
 def reverse_geocode(lat, lng):
+    """Returns (name, has_road_name). A missing road name usually means the
+    point is off-road / out in the sticks / low-context for a guessing game,
+    so callers can use it as an extra automated quality signal.
+    """
     url = f"{NOMINATIM_API}?format=json&lat={lat}&lon={lng}&zoom=17&addressdetails=1"
     try:
         data = fetch_json(url)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-        return None
+        return None, False
     addr = data.get("address", {})
     road = addr.get("road") or addr.get("pedestrian") or addr.get("neighbourhood")
     suburb = addr.get("suburb") or addr.get("city_district") or addr.get("city")
+    if road and is_generic_highway(road):
+        # Numbered highways (E4, Rv86, ...) look the same for miles and give
+        # away nothing distinctive — treat like "no usable road name".
+        road = None
     if road and suburb and road != suburb:
-        return f"{road}, {suburb}"
-    return road or suburb or data.get("display_name", "").split(",")[0]
+        return f"{road}, {suburb}", True
+    if road:
+        return road, True
+    return suburb or data.get("display_name", "").split(",")[0], False
+
+
+def is_generic_highway(road_name):
+    import re
+    return bool(re.match(r"^(E ?\d+|Rv ?\d+|Länsväg ?\d+)$", road_name.strip(), re.IGNORECASE))
 
 
 def image_url(photo):
     # LTh ("large thumb") variant is a decent 1280x720 JPEG, reliably hosted.
     return photo.get("fileurlLTh") or photo.get("fileurl", "").replace("{{sizeprefix}}", "lth")
+
+
+def looks_reasonable(img_url):
+    """Best-effort automated quality gate: reject images that are corrupt,
+    truncated, or near-blank (fog/glare/sky-only shots with no useful
+    landmarks). Not a substitute for human review, but good enough to run
+    unattended. If Pillow isn't available, skip the check (accept everything).
+    """
+    try:
+        from PIL import Image, ImageStat
+    except ImportError:
+        return True
+
+    try:
+        req = urllib.request.Request(img_url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read()
+        img = Image.open(io.BytesIO(raw))
+        img.verify()
+        img = Image.open(io.BytesIO(raw)).convert("L").resize((160, 90))
+        stddev = ImageStat.Stat(img).stddev[0]
+        return stddev >= MIN_CONTRAST_STDDEV
+    except Exception:
+        return False
 
 
 SWEDISH_TRANSLIT = str.maketrans({"å": "a", "ä": "a", "ö": "o", "é": "e", "ü": "u"})
@@ -106,11 +170,51 @@ def save_pool(pool):
     POOL_PLAINTEXT.write_text(json.dumps(pool, indent=2, ensure_ascii=False) + "\n")
 
 
+def load_rejected():
+    """Permanent memory of photos previously judged low-quality (by a human
+    or a prior automated pass), keyed by their KartaView image URL. This
+    file is not sensitive (just public KartaView URLs) and is committed to
+    the repo so the fetcher never re-proposes the same bad spot twice.
+    """
+    if REJECTED_FILE.exists():
+        return set(json.loads(REJECTED_FILE.read_text()).get("rejected_img_urls", []))
+    return set()
+
+
+def save_rejected(rejected_urls):
+    REJECTED_FILE.parent.mkdir(exist_ok=True)
+    REJECTED_FILE.write_text(
+        json.dumps({"rejected_img_urls": sorted(rejected_urls)}, indent=2) + "\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=30, help="how many new locations to add")
     parser.add_argument("--dry-run", action="store_true", help="print candidates, don't write")
+    parser.add_argument(
+        "--require-road-name", action="store_true", default=True,
+        help="skip candidates Nominatim can't tie to a real road (default: on)",
+    )
+    parser.add_argument(
+        "--no-require-road-name", dest="require_road_name", action="store_false",
+    )
+    parser.add_argument(
+        "--skip-image-check", action="store_true",
+        help="skip the automated blank/corrupt image quality gate",
+    )
+    parser.add_argument(
+        "--reject", metavar="IMG_URL", action="append", default=[],
+        help="permanently blocklist an image URL (can repeat) and exit",
+    )
     args = parser.parse_args()
+
+    rejected = load_rejected()
+    if args.reject:
+        rejected.update(args.reject)
+        save_rejected(rejected)
+        print(f"Added {len(args.reject)} URL(s) to the permanent rejection list ({REJECTED_FILE}).")
+        return
 
     pool = load_pool()
     existing_coords = [(loc["lat"], loc["lng"]) for loc in pool]
@@ -135,31 +239,43 @@ def main():
 
     print(f"Found {len(candidates)} unique candidate photos.")
 
-    # Greedily select well-spaced candidates.
-    selected = []
-    all_known = list(existing_coords)
+    # Single streaming pass: keep spatial spacing, reverse-geocode, and run
+    # the automated image quality gate together, so a rejected candidate
+    # doesn't waste its "spacing slot" and block a nearby good one.
+    new_entries = []
+    known_coords = list(existing_coords)
+    checked = 0
     for c in candidates:
-        if len(selected) >= args.count:
+        if len(new_entries) >= args.count:
             break
+        lat, lng, photo = c["lat"], c["lng"], c["photo"]
+
         too_close = any(
-            haversine_m(c["lat"], c["lng"], klat, klng) < MIN_SPACING_METERS
-            for klat, klng in all_known
+            haversine_m(lat, lng, klat, klng) < MIN_SPACING_METERS
+            for klat, klng in known_coords
         )
         if too_close:
             continue
-        selected.append(c)
-        all_known.append((c["lat"], c["lng"]))
 
-    print(f"Selected {len(selected)} well-spaced candidates (min {MIN_SPACING_METERS}m apart).")
-
-    new_entries = []
-    for c in selected:
-        lat, lng, photo = c["lat"], c["lng"], c["photo"]
         img = image_url(photo)
         if not img:
             continue
-        name = reverse_geocode(lat, lng) or "Sundsvall"
+        if img in rejected:
+            continue
+
+        checked += 1
+        name, has_road = reverse_geocode(lat, lng)
         time.sleep(1)  # Nominatim usage policy: max 1 req/sec
+        if args.require_road_name and not has_road:
+            print(f"  - skip (no road name): {name or 'unknown'} ({lat:.5f},{lng:.5f})")
+            continue
+        name = name or "Sundsvall"
+
+        if not args.skip_image_check and not looks_reasonable(img):
+            print(f"  - skip (failed image quality check): {name} ({lat:.5f},{lng:.5f})")
+            continue
+
+        known_coords.append((lat, lng))
 
         base_id = f"kv-{slugify(name)}"
         loc_id = base_id

@@ -3,11 +3,11 @@
 them as a new day's game (data/games/<date>.enc.json). Marks the chosen
 locations as used in the pool so they never repeat.
 
-Designed to be run by the GitHub Actions workflow on weekdays, but can be
-run locally/manually too:
+Designed to be run by the GitHub Actions workflow every day (including
+weekends), but can be run locally/manually too:
 
-    python3 tools/generate_game.py                # today, weekdays only
-    python3 tools/generate_game.py --force         # ignore weekend guard
+    python3 tools/generate_game.py                # today
+    python3 tools/generate_game.py --force         # overwrite existing game
     python3 tools/generate_game.py --date 2026-09-21 --force   # backfill
 """
 import argparse
@@ -28,14 +28,10 @@ ROUND_COUNT = 5
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", help="ISO date to generate for (default: today)")
-    parser.add_argument("--force", action="store_true", help="allow weekends / overwrite")
+    parser.add_argument("--force", action="store_true", help="overwrite an existing game for that date")
     args = parser.parse_args()
 
     today = datetime.date.fromisoformat(args.date) if args.date else datetime.date.today()
-
-    if today.weekday() >= 5 and not args.force:
-        print(f"{today} is a weekend, skipping (use --force to override).")
-        return
 
     date_str = today.isoformat()
     game_file = GAMES_DIR / f"{date_str}.enc.json"
