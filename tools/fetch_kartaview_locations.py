@@ -52,7 +52,6 @@ GRID_POINTS = [
     (62.3850, 17.2850), (62.4020, 17.3100), (62.3760, 17.2900),
     (62.3930, 17.3200), (62.3810, 17.3120), (62.3980, 17.3300),
     # Greater Sundsvall / outer districts.
-    (62.4536, 17.4271),  # Alnö
     (62.3600, 17.2600),  # Skönsberg / Sidsjön
     (62.4100, 17.2600),  # Skönsmon
     (62.3700, 17.3600),  # Bergsåker
@@ -62,14 +61,25 @@ GRID_POINTS = [
     (62.3450, 17.2900),  # Nacksta
     (62.4000, 17.2400),  # Fläsian / Västermalm
     (62.3800, 17.4000),  # Ortviken
+    # Alnö (island district) gets a few extra points since it's easy to
+    # under-sample otherwise — bridge landing, the church/Vi area, and
+    # further out towards Spikbodarna.
+    (62.4536, 17.4271),  # Alnö (general)
+    (62.4180, 17.3700),  # Alnö bridge landing
+    (62.4750, 17.4050),  # Alnö, Vi / church area
+    (62.4900, 17.4400),  # Alnö, Spikbodarna direction
     # A light sprinkling of neighbouring municipalities for variety. Kept
     # deliberately sparse relative to the Sundsvall core above so the city
     # remains the main focus, with just a taste of Timrå/Matfors/Njurunda.
     (62.4950, 17.3350),  # Timrå centrum
     (62.4700, 17.3600),  # Timrå / Söråker direction
+    (62.4600, 17.3450),  # Vivsta (Timrå)
+    (62.4280, 17.3450),  # Birsta (in between Sundsvall and Timrå)
     (62.3540, 16.9800),  # Matfors
     (62.3020, 17.3800),  # Njurunda
     (62.2850, 17.4100),  # Njurunda / Stavre direction
+    (62.2700, 17.3300),  # Kvissleby
+    (62.3350, 17.2350),  # Sundsbruk
 ]
 
 MIN_SPACING_METERS = 120  # avoid near-duplicate photos of the same spot

@@ -7,6 +7,9 @@ const DISTANCE_SCORE_EXPONENT = 1.3; // >1 sharpens the mid-range falloff (harde
 const PERFECT_DISTANCE_METERS = 8; // guesses this close are treated as a perfect 100
 const SCORES_STORAGE_KEY = "sundguesser:scores";
 const ROUND_TIME_SECONDS = 120; // 2 minute time limit per round
+const HOT_STREAK_SCORE = 95; // score needed on a round to count towards a "hot" streak
+const COLD_STREAK_SCORE = 20; // score at/below which a round counts towards a "cold" streak
+const STREAK_MIN_LENGTH = 2; // rounds in a row needed before any streak effect shows
 
 let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLayers;
 let activeGameDate = null;
@@ -15,6 +18,8 @@ let currentShareSeed = null;
 let currentShareCanvas = null;
 let roundTimerInterval = null;
 let roundTimerRemaining = ROUND_TIME_SECONDS;
+let hotStreak = 0;
+let coldStreak = 0;
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000; // meters
@@ -260,6 +265,7 @@ function makeGuess(opts = {}) {
     map.setView([loc.lat, loc.lng], 13);
   }
   roundScores.push(points);
+  updateStreaks(points);
 
   document.getElementById("resultTitle").textContent = loc.name;
   document.getElementById("resultDistance").textContent =
@@ -268,10 +274,50 @@ function makeGuess(opts = {}) {
   const pointsEl = document.getElementById("resultPoints");
   animateScoreCountUp(pointsEl, points, { suffix: ` / 100 ${scoreEmoji(points)}` });
   playScoreEffect(points);
+  applyStreakVisuals();
 
   document.getElementById("guessBtn").disabled = true;
   document.getElementById("resultOverlay").classList.remove("hidden");
   updateHud();
+}
+
+// Tracks consecutive hot (>=95) or cold (<=20) rounds *within the current
+// game*. Breaking a streak (a round that's neither) resets both counters.
+function updateStreaks(points) {
+  if (points >= HOT_STREAK_SCORE) {
+    hotStreak++;
+    coldStreak = 0;
+  } else if (points <= COLD_STREAK_SCORE) {
+    coldStreak++;
+    hotStreak = 0;
+  } else {
+    hotStreak = 0;
+    coldStreak = 0;
+  }
+}
+
+// Shows a gold shimmering border (getting shinier at 3+) for a hot streak,
+// or a gloomy "sad" border (getting heavier at 3+) for a cold streak, on the
+// per-round result popup. Also spawns a matching particle burst.
+function applyStreakVisuals() {
+  const box = document.getElementById("resultBox");
+  const badge = document.getElementById("streakBadge");
+  box.classList.remove("streak-gold", "streak-gold-strong", "streak-sad", "streak-sad-strong");
+  badge.classList.add("hidden");
+
+  if (hotStreak >= STREAK_MIN_LENGTH) {
+    const strong = hotStreak >= 3;
+    box.classList.add(strong ? "streak-gold-strong" : "streak-gold");
+    badge.textContent = `✨ Hot streak x${hotStreak}!`;
+    badge.classList.remove("hidden");
+    launchStreakEffect("gold", strong);
+  } else if (coldStreak >= STREAK_MIN_LENGTH) {
+    const strong = coldStreak >= 3;
+    box.classList.add(strong ? "streak-sad-strong" : "streak-sad");
+    badge.textContent = `😢 Cold streak x${coldStreak}...`;
+    badge.classList.remove("hidden");
+    launchStreakEffect("sad", strong);
+  }
 }
 
 function finalScoreValue() {
@@ -493,6 +539,8 @@ async function startGame(requestedDate) {
     roundLocations = locations;
     currentRoundIndex = 0;
     roundScores = [];
+    hotStreak = 0;
+    coldStreak = 0;
     currentShareSeed = null;
     updateHud();
     loadRound();

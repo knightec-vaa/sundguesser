@@ -50,6 +50,29 @@ function launchFartEffect(count = 18) {
   }
 }
 
+// Streak effects: a shimmering gold sparkle burst for a hot (>=95) streak of
+// 2+ rounds, or a slow grey "raindrop" burst for a cold (<=20) streak of 2+
+// rounds. `strong` (3+ in a row) means more particles and a bigger visual.
+function launchStreakEffect(kind, strong = false) {
+  const layer = getFxLayer();
+  const count = strong ? 40 : 22;
+
+  for (let i = 0; i < count; i++) {
+    const piece = document.createElement("div");
+    piece.className = kind === "gold" ? "gold-sparkle" : "sad-drop";
+    piece.textContent = kind === "gold" ? "✨" : "💧";
+    piece.style.left = `${Math.random() * 100}vw`;
+    piece.style.animationDuration = kind === "gold"
+      ? `${0.9 + Math.random() * 0.8}s`
+      : `${1.6 + Math.random() * 1.0}s`;
+    piece.style.animationDelay = `${Math.random() * 0.35}s`;
+    piece.style.setProperty("--drift", `${(Math.random() - 0.5) * (kind === "gold" ? 160 : 60)}px`);
+    if (strong) piece.style.fontSize = "1.4em";
+    layer.appendChild(piece);
+    piece.addEventListener("animationend", () => piece.remove());
+  }
+}
+
 // Thresholds shared by round + final score reactions.
 const GREAT_SCORE_THRESHOLD = 90;
 const ROUGH_SCORE_THRESHOLD = 15;
