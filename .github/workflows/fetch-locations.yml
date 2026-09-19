@@ -2,8 +2,10 @@ name: Fetch new locations
 
 on:
   schedule:
-    # 05:00 UTC every Sunday — grows the location pool gradually.
-    - cron: "0 5 * * 0"
+    # Wake hourly across the safe Stockholm-time window. The first step
+    # chooses exactly one effective fetch slot per day; all other invocations
+    # exit before checkout or any API calls.
+    - cron: "0 14-23,0-2 * * *"
   workflow_dispatch:
     inputs:
       count:
@@ -18,32 +20,80 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
+      - name: Choose randomized daily slot
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_COUNT: ${{ github.event.inputs.count }}
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import os
+          import random
+          from zoneinfo import ZoneInfo
+
+          now = datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
+          scheduled = os.environ["EVENT_NAME"] == "schedule"
+          if scheduled:
+              safe_hours = list(range(16, 24)) + list(range(0, 4))
+              daily_rng = random.Random(f"{now.date().isoformat()}:location-fetch")
+              target_hour = daily_rng.choice(safe_hours)
+              if now.hour != target_hour:
+                  print(
+                      f"Not today's randomized fetch hour "
+                      f"(target {target_hour:02d}:00 Stockholm, "
+                      f"current {now.hour:02d}:00); skipping."
+                  )
+                  with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+                      env.write("SKIP=true\n")
+                  raise SystemExit
+              count = daily_rng.randint(0, 10)
+          else:
+              count = int(os.environ.get("MANUAL_COUNT") or "10")
+
+          if count == 0:
+              print("Today's randomized fetch count is 0; skipping.")
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+                  env.write("SKIP=true\n")
+              raise SystemExit
+
+          print(f"Fetching up to {count} new location(s).")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"FETCH_COUNT={count}\n")
+          PY
+
       - uses: actions/checkout@v4
+        if: env.SKIP != 'true'
 
       - uses: actions/setup-python@v5
+        if: env.SKIP != 'true'
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: env.SKIP != 'true'
         run: pip install cryptography Pillow
 
       - name: Decrypt current pool
+        if: env.SKIP != 'true'
         env:
           LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
         run: python3 tools/decrypt_pool.py
 
       - name: Fetch new KartaView locations
+        if: env.SKIP != 'true'
         env:
           LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
         run: |
-          python3 tools/fetch_kartaview_locations.py --count "${{ github.event.inputs.count || '10' }}"
+          python3 tools/fetch_kartaview_locations.py --count "$FETCH_COUNT"
 
       - name: Re-encrypt pool
+        if: env.SKIP != 'true'
         env:
           LOCATIONS_KEY: ${{ secrets.SUPERSECRETKEY }}
         run: python3 tools/build_pool.py
 
       - name: Commit and push new locations
+        if: env.SKIP != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
