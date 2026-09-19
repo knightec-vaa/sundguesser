@@ -2,10 +2,12 @@ name: Fetch new locations
 
 on:
   schedule:
-    # Wake hourly across the safe Stockholm-time window. The first step
-    # chooses exactly one effective fetch slot per day; all other invocations
-    # exit before checkout or any API calls.
-    - cron: "0 14-23,0-2 * * *"
+    # 02:00 Europe/Stockholm is 00:00 UTC during CEST and 01:00 UTC during
+    # CET. Both triggers are needed because GitHub cron has no timezone
+    # support; the gate below lets only the run actually occurring at 02:00
+    # Stockholm continue.
+    - cron: "0 0 * * *"
+    - cron: "0 1 * * *"
   workflow_dispatch:
     inputs:
       count:
@@ -20,7 +22,7 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Choose randomized daily slot
+      - name: Check daily schedule and choose random delay/count
         env:
           EVENT_NAME: ${{ github.event_name }}
           MANUAL_COUNT: ${{ github.event.inputs.count }}
@@ -29,29 +31,31 @@ jobs:
           import datetime
           import os
           import random
+          import time
           from zoneinfo import ZoneInfo
 
-          now = datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
           scheduled = os.environ["EVENT_NAME"] == "schedule"
+          now = datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
+          if scheduled and now.hour != 2:
+              print(
+                  f"Not 02:00 Stockholm time (currently {now:%H:%M}); "
+                  "skipping this DST-shadow run."
+              )
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+                  env.write("SKIP=true\n")
+              raise SystemExit
+
           if scheduled:
-              safe_hours = list(range(16, 24)) + list(range(0, 4))
-              daily_rng = random.Random(f"{now.date().isoformat()}:location-fetch")
-              target_hour = daily_rng.choice(safe_hours)
-              if now.hour != target_hour:
-                  print(
-                      f"Not today's randomized fetch hour "
-                      f"(target {target_hour:02d}:00 Stockholm, "
-                      f"current {now.hour:02d}:00); skipping."
-                  )
-                  with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
-                      env.write("SKIP=true\n")
-                  raise SystemExit
-              count = daily_rng.randint(0, 10)
+              rng = random.SystemRandom()
+              delay = rng.randint(60, 1800)
+              count = rng.randint(0, 10)
+              print(f"Waiting {delay // 60}m {delay % 60}s before fetching.")
+              time.sleep(delay)
           else:
               count = int(os.environ.get("MANUAL_COUNT") or "10")
 
           if count == 0:
-              print("Today's randomized fetch count is 0; skipping.")
+              print("Today's random fetch count is 0; skipping.")
               with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
                   env.write("SKIP=true\n")
               raise SystemExit
