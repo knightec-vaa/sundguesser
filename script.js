@@ -6,6 +6,7 @@ const DISTANCE_DECAY_METERS = 450; // controls how quickly score falls off with 
 const DISTANCE_SCORE_EXPONENT = 1.3; // >1 sharpens the mid-range falloff (harder, more precise scoring)
 const PERFECT_DISTANCE_METERS = 8; // guesses this close are treated as a perfect 100
 const SCORES_STORAGE_KEY = "sundguesser:scores";
+const ATTEMPTS_STORAGE_KEY = "sundguesser:attempts";
 const ROUND_TIME_SECONDS = 120; // 2 minute time limit per round
 const HOT_STREAK_SCORE = 95; // score needed on a round to count towards a "hot" streak
 const COLD_STREAK_SCORE = 20; // score at/below which a round counts towards a "cold" streak
@@ -21,10 +22,19 @@ let activeGameDate = null;
 let manifestCache = null;
 let currentShareSeed = null;
 let currentShareCanvas = null;
+let currentMedals = [];
+let currentAttemptNumber = 1;
 let roundTimerInterval = null;
 let roundTimerRemaining = ROUND_TIME_SECONDS;
 let hotStreak = 0;
 let coldStreak = 0;
+
+// Per-round speed/efficiency tracking, used for the "medal" badges on the
+// share card (fast guesser / never needed to zoom in). Reset per game in
+// startGame(), appended to per round in makeGuess().
+let roundTimesTaken = [];
+let roundZoomUsed = [];
+let zoomUsedThisRound = false;
 
 // Photo zoom/pan state (see setupPhotoZoom()). Reset every new round.
 let zoomScale = 1;
@@ -91,14 +101,39 @@ function getSavedScore(date) {
 // replays don't overwrite your official result for that day. A random seed
 // is stored alongside it so the share-card background stays consistent
 // whenever this score is viewed again later.
-function saveFirstScoreIfMissing(date, score, scores) {
+function saveFirstScoreIfMissing(date, score, scores, medals) {
   const saved = loadSavedScores();
   if (saved[date]) return { record: saved[date], justSaved: false };
   const seed = Math.floor(Math.random() * 1e9);
-  const record = { score, roundScores: scores, recordedAt: new Date().toISOString(), seed };
+  const record = { score, roundScores: scores, recordedAt: new Date().toISOString(), seed, medals: medals || [] };
   saved[date] = record;
   localStorage.setItem(SCORES_STORAGE_KEY, JSON.stringify(saved));
   return { record, justSaved: true };
+}
+
+// Counts every full completion of a given day's game, even replays that
+// don't overwrite the official score — used to stamp non-first attempts on
+// the share card (e.g. "2ND TRY") so a replayed/re-rolled score can't be
+// passed off as someone's original result.
+function loadAttempts() {
+  try {
+    return JSON.parse(localStorage.getItem(ATTEMPTS_STORAGE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function bumpAttempt(date) {
+  const all = loadAttempts();
+  all[date] = (all[date] || 0) + 1;
+  localStorage.setItem(ATTEMPTS_STORAGE_KEY, JSON.stringify(all));
+  return all[date];
+}
+
+function ordinal(n) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
 }
 
 // --- URL <-> selected date -----------------------------------------
@@ -159,6 +194,7 @@ function clampPan(pane) {
 
 function setZoom(newScale) {
   const pane = document.getElementById("photoPane");
+  zoomUsedThisRound = true; // any deliberate zoom action counts as "looking around"
   zoomScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newScale));
   if (zoomScale <= 1.001) {
     zoomScale = 1;
@@ -330,6 +366,7 @@ function clearResultLayers() {
 function loadRound() {
   clearResultLayers();
   roundLocked = false;
+  zoomUsedThisRound = false;
   if (guessMarker) {
     map.removeLayer(guessMarker);
     guessMarker = null;
@@ -414,6 +451,12 @@ function makeGuess(opts = {}) {
   roundScores.push(points);
   updateStreaks(points);
 
+  // Speed/efficiency tracking for the end-of-game medal badges: how long
+  // this round took (time limit minus whatever was left) and whether the
+  // photo was ever zoomed/panned into during this round.
+  roundTimesTaken.push(ROUND_TIME_SECONDS - Math.max(0, roundTimerRemaining));
+  roundZoomUsed.push(zoomUsedThisRound);
+
   document.getElementById("resultTitle").textContent = loc.name;
   document.getElementById("resultDistance").textContent =
     timedOut && guessMarker ? `⏱ Time's up! Distance: ${distText}` : `Distance: ${distText}`;
@@ -474,6 +517,21 @@ function finalScoreValue() {
   return Math.round(roundScores.reduce((a, b) => a + b, 0) / roundScores.length);
 }
 
+// Speed/efficiency "medals" for the share card — only awarded on a decent
+// score so a lucky-fast-but-terrible guess doesn't get rewarded. Based on
+// average time taken per round and whether the photo was ever zoomed/panned.
+function computeMedals(score, times, zoomUsed) {
+  if (!times || !times.length || score < 60) return [];
+  const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+  const medals = [];
+  if (avgTime <= 12) medals.push({ icon: "⚡", label: "Lightning Fast" });
+  else if (avgTime <= 25) medals.push({ icon: "🏃", label: "Quick Guesser" });
+  if (zoomUsed && zoomUsed.length && zoomUsed.every((z) => !z)) {
+    medals.push({ icon: "🧭", label: "True Local" });
+  }
+  return medals;
+}
+
 function nextRound() {
   currentRoundIndex++;
   if (currentRoundIndex >= ROUND_COUNT) {
@@ -489,8 +547,11 @@ function nextRound() {
 
     renderRoundBreakdown();
 
-    const { record, justSaved } = saveFirstScoreIfMissing(activeGameDate, finalScore, roundScores);
+    currentAttemptNumber = bumpAttempt(activeGameDate);
+    const medals = computeMedals(finalScore, roundTimesTaken, roundZoomUsed);
+    const { record, justSaved } = saveFirstScoreIfMissing(activeGameDate, finalScore, roundScores, medals);
     currentShareSeed = record.seed;
+    currentMedals = record.medals || [];
     updateShareCardPreview();
     updateShareBtnTier(finalScore);
     document.getElementById("finalOverlay").classList.remove("hidden");
@@ -526,6 +587,8 @@ function showSavedScoreOverlay(date) {
 
   roundScores = record.roundScores;
   currentShareSeed = typeof record.seed === "number" ? record.seed : hashSeed(`${date}:${record.score}`);
+  currentMedals = record.medals || [];
+  currentAttemptNumber = 1; // viewing the official recorded result, not a new attempt
 
   document.getElementById("finalScore").textContent =
     `Final Score: ${record.score} / 100 ${scoreEmoji(record.score)}`;
@@ -565,8 +628,9 @@ function drawShareCanvas() {
   canvas.height = H;
   const ctx = canvas.getContext("2d");
 
-  const theme = themeForScore(finalScoreValue());
-  paintShareBackground(ctx, theme, W, H);
+  const shareScore = finalScoreValue();
+  const theme = themeForScore(shareScore);
+  paintShareBackground(ctx, theme, W, H, shareScore);
 
   ctx.save();
   ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
@@ -598,6 +662,31 @@ function drawShareCanvas() {
     ctx.textAlign = "center";
     ctx.fillText(info.short, chipX + chipW / 2, chipY + chipH / 2 + 5);
     ctx.textAlign = "left";
+
+    // A replay/retry stamp — only shown when this isn't the player's first
+    // completion of this day's game, so a re-rolled score can't be passed
+    // off as an original result. Sits just under the weekday chip.
+    if (currentAttemptNumber > 1) {
+      const tagText = `${ordinal(currentAttemptNumber).toUpperCase()} TRY`;
+      ctx.font = "bold 12px sans-serif";
+      const tagW = ctx.measureText(tagText).width + 18;
+      const tagX = W - tagW - 24;
+      const tagY = chipY + chipH + 8;
+      ctx.save();
+      ctx.translate(tagX + tagW / 2, tagY + 10);
+      ctx.rotate(-0.08);
+      drawRoundedRect(ctx, -tagW / 2, -10, tagW, 20, 10);
+      ctx.fillStyle = "rgba(239, 71, 111, 0.85)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.6)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.fillText(tagText, 0, 4);
+      ctx.textAlign = "left";
+      ctx.restore();
+    }
   }
 
   // A translucent dark panel behind the big score number keeps it legible
@@ -654,6 +743,25 @@ function drawShareCanvas() {
   ctx.fillText(shareSiteUrl(), W - 28, H - 18);
   ctx.textAlign = "left";
 
+  // Speed/efficiency medal badges, if earned — small pills sitting between
+  // the round breakdown and the footer link.
+  if (currentMedals.length) {
+    let mx = 28;
+    const my = 284;
+    ctx.font = "bold 13px sans-serif";
+    currentMedals.forEach((medal) => {
+      const label = `${medal.icon} ${medal.label}`;
+      const textW = ctx.measureText(label).width;
+      const pillW = textW + 22;
+      drawRoundedRect(ctx, mx, my, pillW, 24, 12);
+      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(label, mx + 11, my + 17);
+      mx += pillW + 10;
+    });
+  }
+
   return canvas;
 }
 
@@ -677,17 +785,16 @@ async function shareResult() {
     try {
       if (navigator.clipboard && window.ClipboardItem) {
         // Write both the image and the site link as separate clipboard
-        // representations. Some apps (Slack) paste both; others (Discord)
-        // always drop the text when an image is also present on the
-        // clipboard — that's a receiving-app limitation we can't fix from
-        // here, so we also offer a separate "Copy Link" button below for
-        // exactly that case.
+        // representations. Some apps (Slack) paste both; Discord drops the
+        // text when an image is also present — but the link is also baked
+        // right into the card image itself (bottom-right corner), so it's
+        // still visible either way.
         const item = new ClipboardItem({
           "image/png": blob,
           "text/plain": new Blob([shareUrl], { type: "text/plain" })
         });
         await navigator.clipboard.write([item]);
-        status.textContent = "Image copied! (On Discord, also hit Copy Link — it drops links pasted with images.)";
+        status.textContent = "Image copied!";
         return;
       }
       throw new Error("Clipboard image API not supported");
@@ -702,22 +809,6 @@ async function shareResult() {
       status.textContent = "Clipboard copy isn't supported here — downloaded the image instead.";
     }
   }, "image/png");
-}
-
-// Separate, explicit "just the link" copy — needed because Discord (unlike
-// Slack) silently drops any accompanying text/plain clipboard data whenever
-// an image is also on the clipboard, so the link from shareResult() above
-// never shows up there. This is a Discord-side limitation with no
-// JS-side fix, hence the dedicated button.
-async function copyShareLink() {
-  const status = document.getElementById("shareStatus");
-  const shareUrl = shareSiteUrl();
-  try {
-    await navigator.clipboard.writeText(shareUrl);
-    status.textContent = "Link copied!";
-  } catch (err) {
-    status.textContent = `Couldn't copy automatically — here's the link: ${shareUrl}`;
-  }
 }
 
 async function startGame(requestedDate) {
@@ -747,9 +838,12 @@ async function startGame(requestedDate) {
     roundLocations = locations;
     currentRoundIndex = 0;
     roundScores = [];
+    roundTimesTaken = [];
+    roundZoomUsed = [];
     hotStreak = 0;
     coldStreak = 0;
     currentShareSeed = null;
+    currentMedals = [];
     updateHud();
     // Don't jump straight into round 1 (which would both spoil the photo
     // and silently start the 2-minute timer) — show a start gate first so
@@ -817,7 +911,6 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("nextBtn").addEventListener("click", nextRound);
   document.getElementById("restartBtn").addEventListener("click", () => startGame(activeGameDate));
   document.getElementById("shareBtn").addEventListener("click", shareResult);
-  document.getElementById("copyLinkBtn").addEventListener("click", copyShareLink);
   document.getElementById("dateSelect").addEventListener("change", (e) => startGame(e.target.value));
   document.getElementById("viewScoreBtn").addEventListener("click", () => showSavedScoreOverlay(activeGameDate));
   document.getElementById("closeFinalBtn").addEventListener("click", () => {

@@ -176,11 +176,11 @@ function themeForScore(score) {
   return SHARE_THEME_GRIME;
 }
 
-function paintShareBackground(ctx, theme, W, H) {
+function paintShareBackground(ctx, theme, W, H, score) {
   if (theme.wave === "mud" || theme.wave === "grime") {
-    paintEmbarrassingShareBackground(ctx, theme.wave, W, H);
+    paintEmbarrassingShareBackground(ctx, theme.wave, W, H, score);
   } else {
-    paintWaveShareBackground(ctx, theme.wave, W, H);
+    paintWaveShareBackground(ctx, theme.wave, W, H, score);
   }
 }
 
@@ -190,11 +190,58 @@ function paintShareBackground(ctx, theme, W, H) {
 // Bad/terrible scores (mud/grime) don't use this at all — see
 // paintEmbarrassingShareBackground below, which is deliberately ugly.
 const WAVE_PALETTES = {
-  gold: { base: ["#0a1830", "#123166"], bands: ["#fff3c4", "#e8b93a", "#8a6a12"], shiny: true, glow: "rgba(255, 224, 130, 0.55)" },
-  silver: { base: ["#0c1420", "#1c2c40"], bands: ["#ffffff", "#c3d0dc", "#7c8ba0"], shiny: true, glow: "rgba(210, 226, 240, 0.4)" },
-  bronze: { base: ["#170f08", "#3a2210"], bands: ["#ffd9a8", "#c17f42", "#6b3f1c"], shiny: true, glow: "rgba(255, 176, 110, 0.32)" },
-  dirt: { base: ["#140f08", "#2c2110"], bands: ["#8a6a38", "#5f4622", "#3c2c16"], shiny: false, glow: null },
+  gold: {
+    base: ["#0a1830", "#123166"],
+    shiny: true,
+    glow: "rgba(255, 224, 130, 0.55)",
+    variants: [
+      ["#fff3c4", "#e8b93a", "#8a6a12"], // classic gold
+      ["#ffe9c9", "#e0a95e", "#a85a2a"], // rose gold
+      ["#f3ffcf", "#c9d95a", "#6f8a1e"], // patina/antique gold
+      ["#fff7e0", "#f0c14b", "#c98a1e"], // bright sun gold
+    ],
+  },
+  silver: {
+    base: ["#0c1420", "#1c2c40"],
+    shiny: true,
+    glow: "rgba(210, 226, 240, 0.4)",
+    variants: [
+      ["#ffffff", "#c3d0dc", "#7c8ba0"], // classic silver
+      ["#eef5ff", "#a9c6e8", "#5f7fa3"], // steel blue silver
+      ["#f7f2ff", "#c9b8dd", "#8a76a3"], // lilac silver
+      ["#f2fff9", "#a9d9c4", "#5f9c82"], // mint silver
+    ],
+  },
+  bronze: {
+    base: ["#170f08", "#3a2210"],
+    shiny: true,
+    glow: "rgba(255, 176, 110, 0.32)",
+    variants: [
+      ["#ffd9a8", "#c17f42", "#6b3f1c"], // classic bronze
+      ["#ffcfc0", "#c46a4e", "#722f1c"], // copper bronze
+      ["#f0dfa8", "#b3934a", "#5f4a1c"], // brass bronze
+      ["#ffe0b0", "#c98f52", "#8a4f1e"], // amber bronze
+    ],
+  },
+  dirt: {
+    base: ["#140f08", "#2c2110"],
+    shiny: false,
+    glow: null,
+    variants: [
+      ["#8a6a38", "#5f4622", "#3c2c16"], // classic dirt
+      ["#7a7050", "#565038", "#33301f"], // dry clay
+      ["#8a5a38", "#5f3a22", "#3c2416"], // reddish soil
+    ],
+  },
 };
+
+// Picks a variant band trio for a tier deterministically from the exact
+// score (so e.g. 82 and 91 — both "silver" — get a slightly different
+// palette flavor) rather than every score in a tier looking identical.
+function pickVariant(list, score) {
+  return list[hashSeed(`variant-${score}`) % list.length];
+}
+
 
 // Draws a soft sine-wave band (like the crest's wavy dividers) filled with
 // either a flat color or a gradient (for the shiny metal tiers).
@@ -219,15 +266,16 @@ function drawWaveBand(ctx, W, yBase, amplitude, wavelength, phase, thickness, fi
 // Paints the whole share-card background: a deep gradient base plus 3
 // horizontal wavy bands (deterministic per tier, stable across re-renders),
 // then a dark scrim so text stays legible over any tier.
-function paintWaveShareBackground(ctx, tier, W, H) {
+function paintWaveShareBackground(ctx, tier, W, H, score) {
   const p = WAVE_PALETTES[tier];
+  const bands = pickVariant(p.variants, score);
   const base = ctx.createLinearGradient(0, 0, 0, H);
   base.addColorStop(0, p.base[0]);
   base.addColorStop(1, p.base[1]);
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, W, H);
 
-  const rng = mulberry32(hashSeed(tier + "wave"));
+  const rng = mulberry32(hashSeed(`${tier}-wave-${score}`));
   const bandSpecs = [
     { yFrac: 0.32, amp: 16, thickness: 34, alpha: p.shiny ? 0.85 : 0.6 },
     { yFrac: 0.55, amp: 20, thickness: 30, alpha: p.shiny ? 0.75 : 0.5 },
@@ -241,12 +289,12 @@ function paintWaveShareBackground(ctx, tier, W, H) {
     let fillStyle;
     if (p.shiny) {
       const grad = ctx.createLinearGradient(0, yBase - spec.amp, 0, yBase + spec.thickness + spec.amp);
-      grad.addColorStop(0, p.bands[(i + 1) % p.bands.length]);
-      grad.addColorStop(0.5, p.bands[i % p.bands.length]);
-      grad.addColorStop(1, p.bands[(i + 2) % p.bands.length]);
+      grad.addColorStop(0, bands[(i + 1) % bands.length]);
+      grad.addColorStop(0.5, bands[i % bands.length]);
+      grad.addColorStop(1, bands[(i + 2) % bands.length]);
       fillStyle = grad;
     } else {
-      fillStyle = p.bands[i % p.bands.length];
+      fillStyle = bands[i % bands.length];
     }
     drawWaveBand(ctx, W, yBase, spec.amp, wavelength, phase, spec.thickness, fillStyle, spec.alpha);
   });
@@ -276,12 +324,13 @@ function paintWaveShareBackground(ctx, tier, W, H) {
 // the bad result. Getting a good result should look good; getting a bad
 // one should look and feel a little embarrassing, on purpose.
 const SHAME_STAMPS = {
-  mud: { text: "YIKES", flat: "#4a4636", stampColor: "rgba(220, 60, 40, 0.4)", crackColor: "rgba(0,0,0,0.45)" },
-  grime: { text: "OOF", flat: "#3a372c", stampColor: "rgba(200, 20, 20, 0.5)", crackColor: "rgba(0,0,0,0.6)" },
+  mud: { texts: ["YIKES", "ROUGH", "OOPS", "MEH"], flat: "#4a4636", stampColor: "rgba(220, 60, 40, 0.4)", crackColor: "rgba(0,0,0,0.45)" },
+  grime: { texts: ["OOF", "YIKES", "0/10", "RIP"], flat: "#3a372c", stampColor: "rgba(200, 20, 20, 0.5)", crackColor: "rgba(0,0,0,0.6)" },
 };
 
-function paintEmbarrassingShareBackground(ctx, tier, W, H) {
+function paintEmbarrassingShareBackground(ctx, tier, W, H, score) {
   const s = SHAME_STAMPS[tier];
+  const stampText = pickVariant(s.texts, score);
 
   // Flat, deliberately dull/sickly color — no gradient, no shine.
   ctx.fillStyle = s.flat;
@@ -289,7 +338,7 @@ function paintEmbarrassingShareBackground(ctx, tier, W, H) {
 
   // Harsh jagged crack lines (unlike the smooth waves used for a decent
   // score) — visually says "something broke here."
-  const rng = mulberry32(hashSeed(tier + "crack"));
+  const rng = mulberry32(hashSeed(`${tier}-crack-${score}`));
   const crackCount = tier === "grime" ? 7 : 5;
   ctx.save();
   ctx.strokeStyle = s.crackColor;
@@ -317,7 +366,7 @@ function paintEmbarrassingShareBackground(ctx, tier, W, H) {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = s.stampColor;
-  ctx.fillText(s.text, 0, 0);
+  ctx.fillText(stampText, 0, 0);
   ctx.restore();
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.3)";

@@ -442,14 +442,6 @@ main {
   flex-wrap: wrap;
 }
 
-#copyLinkBtn {
-  background: #24344a;
-}
-
-#copyLinkBtn:hover {
-  background: #33496a;
-}
-
 #shareBtn::before {
   content: "";
   position: absolute;
