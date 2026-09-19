@@ -27,6 +27,7 @@ import argparse
 import io
 import json
 import math
+import random
 import time
 import urllib.error
 import urllib.request
@@ -274,6 +275,8 @@ def main():
     new_entries = []
     known_coords = list(existing_coords)
     checked = 0
+    image_downloads = 0
+    delay_rng = random.SystemRandom()
     for c in candidates:
         if len(new_entries) >= args.count:
             break
@@ -300,15 +303,25 @@ def main():
             continue
         name = name or "Sundsvall"
 
+        if image_downloads:
+            delay = delay_rng.randint(60, 300)
+            print(
+                f"  - waiting {delay // 60}m {delay % 60}s before the next image download"
+            )
+            time.sleep(delay)
+
         raw_bytes = None
         if not args.skip_image_check:
             raw_bytes, ok = fetch_and_check_image(img)
+            image_downloads += 1
             if not ok:
                 print(f"  - skip (failed image quality check): {name} ({lat:.5f},{lng:.5f})")
                 continue
 
         try:
             img_data, img_ext = fetch_and_compress(img, raw=raw_bytes)
+            if args.skip_image_check:
+                image_downloads += 1
         except Exception as exc:
             print(f"  - skip (failed to download/compress image): {name} ({exc})")
             continue
