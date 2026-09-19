@@ -144,24 +144,17 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
 }
 
 // --- Share-card background variety ---------------------------------------
-// A small palette of aesthetically-matched gradients, plus a couple of
-// score-exclusive special ones (a shiny gold theme for 95+, and the
-// vaaraniemi.se rainbow reserved for the 80-94 "great" tier). Recolored to
-// echo the Medelpad landskap coat of arms (deep blue, vivid blue, red,
-// silver/steel). Regular (non-tiered) themes are still picked
-// deterministically from a per-score seed so a given completed score always
-// redraws the same way, but different people/days see some variety.
-const SHARE_THEMES = [
-  { name: "medelpad", stops: ["#003d8f", "#0057b8"] },
-  { name: "vagor", stops: ["#001c3d", "#003d8f", "#0057b8"] },
-  { name: "flagg", stops: ["#003d8f", "#eeeeee", "#d40000"] }
-];
-
-const SHARE_THEME_SILVER = { name: "silverskold", stops: ["#334155", "#7fc4ff"] };
-const SHARE_THEME_RED = { name: "rostrod", stops: ["#7a0000", "#d40000"] };
-const SHARE_THEME_DARK = { name: "djuphav", stops: ["#00142e", "#00316b"] };
-const SHARE_THEME_RAINBOW = { name: "rainbow", rainbow: true };
-const SHARE_THEME_GOLD = { name: "aurum", gold: true };
+// A "trophy fading into dirt" progression: shiny gold for a near-perfect
+// score, silver just below it, bronze/copper for a solid middle score, then
+// progressively duller/muddier browns for meh/bad/terrible scores. No more
+// rainbow — every tier is a distinct, exclusive metallic-or-dirt look tied
+// directly to how well you actually did.
+const SHARE_THEME_GOLD = { name: "aurum", metal: "gold" };
+const SHARE_THEME_SILVER = { name: "argentum", metal: "silver" };
+const SHARE_THEME_BRONZE = { name: "aes", metal: "bronze" };
+const SHARE_THEME_DIRT = { name: "jord", mud: "light" };
+const SHARE_THEME_MUD = { name: "gyttja", mud: "dark" };
+const SHARE_THEME_GRIME = { name: "dy", mud: "grime" };
 
 // Simple deterministic string hash (djb2-ish) -> non-negative int.
 function hashSeed(str) {
@@ -172,61 +165,52 @@ function hashSeed(str) {
   return Math.abs(h | 0);
 }
 
-// Picks the share-card background theme based on the final score's tier —
-// a shiny gold theme is exclusive to 95+, the rainbow easter-egg is
-// exclusive to the 80-94 "great" tier, and lower tiers get progressively
-// cooler/duller Medelpad-family colors. Within the broad "good" tier a
-// per-seed pick still gives some day-to-day variety.
-function themeForScore(score, seed) {
+// Picks the share-card background theme based on the final score's tier.
+// Each tier maps to exactly one theme (no per-seed randomness) so the
+// gold/silver/bronze/dirt progression is always immediately recognizable.
+function themeForScore(score) {
   if (score >= 95) return SHARE_THEME_GOLD;
-  if (score >= 80) return SHARE_THEME_RAINBOW;
-  if (score >= 60) return SHARE_THEMES[Math.abs(seed) % SHARE_THEMES.length];
-  if (score >= 40) return SHARE_THEME_SILVER;
-  if (score >= 20) return SHARE_THEME_RED;
-  return SHARE_THEME_DARK;
+  if (score >= 80) return SHARE_THEME_SILVER;
+  if (score >= 60) return SHARE_THEME_BRONZE;
+  if (score >= 40) return SHARE_THEME_DIRT;
+  if (score >= 20) return SHARE_THEME_MUD;
+  return SHARE_THEME_GRIME;
 }
 
-// Fills the canvas background with the given theme's gradient, then applies
-// a dark scrim so white text stays readable regardless of theme. `theme.
-// stops` can be any length (2+) — evenly distributed along the gradient —
-// to support both simple 2-color themes and the "flagg"/"vagor" 3-stop
-// ones. The gold theme gets a dedicated shiny/diagonal-shine treatment
-// instead of a plain gradient.
+// Fills the canvas background with the given theme, then applies a dark
+// scrim so white text stays readable regardless of theme. Metallic themes
+// (gold/silver/bronze) get a shiny gradient + diagonal light-sweep streaks;
+// mud themes get a flatter, grubbier gradient with a subtle blotchy texture.
 function paintShareBackground(ctx, theme, W, H) {
-  if (theme.gold) {
-    paintGoldShareBackground(ctx, W, H);
-    return;
-  }
-  const grad = ctx.createLinearGradient(0, 0, W, H);
-  if (theme.rainbow) {
-    const hues = [0, 45, 90, 150, 210, 270, 330];
-    hues.forEach((h, i) => grad.addColorStop(i / (hues.length - 1), `hsl(${h}, 75%, 45%)`));
+  if (theme.metal) {
+    paintMetalShareBackground(ctx, theme.metal, W, H);
   } else {
-    theme.stops.forEach((color, i) => grad.addColorStop(i / (theme.stops.length - 1), color));
+    paintMudShareBackground(ctx, theme.mud, W, H);
   }
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
-  // Slightly heavier scrim on the rainbow theme since its hues swing bright
-  // enough to fight with white text; other themes are already darker.
-  ctx.fillStyle = theme.rainbow ? "rgba(0, 0, 0, 0.42)" : "rgba(0, 0, 0, 0.35)";
-  ctx.fillRect(0, 0, W, H);
 }
 
-// A dedicated "shiny gold" background reserved for 95+ scores: a warm
-// gold/bronze gradient with a few diagonal light-sweep streaks (drawn as
-// static translucent bands, evoking a metallic shine on a single frame),
-// then a dark scrim so text still reads clearly on top.
-function paintGoldShareBackground(ctx, W, H) {
+const METAL_COLORS = {
+  gold: { dark: "#3d2c00", mid: "#caa32c", shine: "#fffbe6" },
+  silver: { dark: "#2c333d", mid: "#b7c2cc", shine: "#ffffff" },
+  bronze: { dark: "#3a2210", mid: "#a9683a", shine: "#ffd9a8" },
+};
+
+// Shared shiny-metal painter: gradient + diagonal translucent streaks, used
+// for gold (legendary), silver (great) and bronze (good) tiers alike — only
+// the color trio changes, so all three read as "the same kind of shiny"
+// rather than unrelated one-off effects.
+function paintMetalShareBackground(ctx, metal, W, H) {
+  const c = METAL_COLORS[metal];
   const grad = ctx.createLinearGradient(0, 0, W, H);
-  grad.addColorStop(0, "#3d2c00");
-  grad.addColorStop(0.5, "#caa32c");
-  grad.addColorStop(1, "#3d2c00");
+  grad.addColorStop(0, c.dark);
+  grad.addColorStop(0.5, c.mid);
+  grad.addColorStop(1, c.dark);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
 
   ctx.save();
   ctx.globalAlpha = 0.16;
-  ctx.fillStyle = "#fffbe6";
+  ctx.fillStyle = c.shine;
   const streakWidth = 26;
   for (let x = -H; x < W + H; x += 70) {
     ctx.beginPath();
@@ -241,6 +225,55 @@ function paintGoldShareBackground(ctx, W, H) {
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
   ctx.fillRect(0, 0, W, H);
+}
+
+const MUD_COLORS = {
+  light: { top: "#4a3822", bottom: "#2e2211" },
+  dark: { top: "#2e2313", bottom: "#1a140a" },
+  grime: { top: "#1c1a14", bottom: "#0d0c08" },
+};
+
+// Shared muddy painter for the meh/bad/terrible tiers — a flat, desaturated
+// brown gradient (progressively darker/duller per tier) with a few soft
+// blotches to suggest dried mud/dirt rather than a clean gradient, echoing
+// the "brown dirt" look requested for below-average scores.
+function paintMudShareBackground(ctx, mud, W, H) {
+  const c = MUD_COLORS[mud];
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, c.top);
+  grad.addColorStop(1, c.bottom);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  ctx.fillStyle = "#000000";
+  const rng = mulberry32(hashSeed(mud + W));
+  for (let i = 0; i < 10; i++) {
+    const bx = rng() * W;
+    const by = rng() * H;
+    const br = 40 + rng() * 90;
+    ctx.beginPath();
+    ctx.ellipse(bx, by, br, br * 0.7, rng() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+  ctx.fillRect(0, 0, W, H);
+}
+
+// Tiny deterministic PRNG (mulberry32) so the mud-blotch layout is stable
+// per mud-tier rather than re-randomizing (and flickering) on every redraw.
+function mulberry32(seed) {
+  let a = seed;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 // Animates a number counting up from 0 to `target` inside `el`, appending

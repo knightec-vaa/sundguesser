@@ -541,7 +541,7 @@ function updateShareCardPreview() {
 }
 
 // Swaps the share button's animated border tier to match how good the
-// score was (legendary rainbow down to a barely-moving grayscale ring).
+// score was (shiny gold down to a grimy near-black ring).
 function updateShareBtnTier(score) {
   const btn = document.getElementById("shareBtn");
   if (!btn) return;
@@ -556,8 +556,7 @@ function drawShareCanvas() {
   canvas.height = H;
   const ctx = canvas.getContext("2d");
 
-  const seed = typeof currentShareSeed === "number" ? currentShareSeed : hashSeed(activeGameDate || "sundguesser");
-  const theme = themeForScore(finalScoreValue(), seed);
+  const theme = themeForScore(finalScoreValue());
   paintShareBackground(ctx, theme, W, H);
 
   ctx.save();

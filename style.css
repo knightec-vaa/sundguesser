@@ -444,7 +444,7 @@ main {
   inherits: false;
 }
 
-@keyframes shareRainbowPan {
+@keyframes shareShinePan {
   0% { background-position: 0% 50%; }
   100% { background-position: 200% 50%; }
 }
@@ -453,61 +453,63 @@ main {
   to { --ring-angle: 360deg; }
 }
 
-/* legendary (95+): vaaraniemi.se rainbow, scrolling */
+/* legendary (95+): shiny gold sweep, fastest shimmer */
 #shareBtn.tier-legendary::before {
-  background-image: linear-gradient(124deg, #ff2400, #e81d1d, #e8b71d, #e3e81d, #1de840, #1ddde8, #2b1de8, #dd00f3, #dd00f3);
-  filter: saturate(1.2) brightness(1.1);
+  background-image: linear-gradient(124deg, #7a5a00, #ffd166, #fff3c4, #ffb703, #7a5a00);
+  background-size: 300% 300%;
+  filter: saturate(1.15) brightness(1.05);
 }
 
 #shareBtn.tier-legendary:hover::before {
-  animation: shareRainbowPan 2.5s linear infinite;
+  animation: shareShinePan 2.2s linear infinite;
 }
 
-/* great (80-94): same rainbow, calmer pace */
+/* great (80-94): shiny silver sweep, a touch calmer */
 #shareBtn.tier-great::before {
-  background-image: linear-gradient(124deg, #ff2400, #e81d1d, #e8b71d, #e3e81d, #1de840, #1ddde8, #2b1de8, #dd00f3, #dd00f3);
+  background-image: linear-gradient(124deg, #4a5568, #e2e8f0, #ffffff, #cbd5e1, #4a5568);
+  background-size: 300% 300%;
 }
 
 #shareBtn.tier-great:hover::before {
-  animation: shareRainbowPan 4.5s linear infinite;
+  animation: shareShinePan 3s linear infinite;
 }
 
-/* good (60-79): Medelpad blue sweep, rotating conic ring */
+/* good (60-79): shiny bronze/copper sweep */
 #shareBtn.tier-good::before {
-  --ring-angle: 0deg;
-  background-image: conic-gradient(from var(--ring-angle), #003d8f, #0057b8, #7fc4ff, #0057b8, #003d8f);
+  background-image: linear-gradient(124deg, #4a2a10, #c1793f, #ffcb8e, #a9683a, #4a2a10);
+  background-size: 300% 300%;
 }
 
 #shareBtn.tier-good:hover::before {
-  animation: shareRingSpin 3.5s linear infinite;
+  animation: shareShinePan 3.8s linear infinite;
 }
 
-/* meh (40-59): muted silver/steel sweep, slower */
+/* meh (40-59): light dirt-brown, rotating conic ring (no shine — dull earth) */
 #shareBtn.tier-meh::before {
   --ring-angle: 0deg;
-  background-image: conic-gradient(from var(--ring-angle), #6b7684, #a8b3c0, #6b7684);
+  background-image: conic-gradient(from var(--ring-angle), #4a3822, #6b5232, #4a3822);
 }
 
 #shareBtn.tier-meh:hover::before {
   animation: shareRingSpin 5s linear infinite;
 }
 
-/* bad (20-39): dull Medelpad red, sluggish */
+/* bad (20-39): darker mud, sluggish */
 #shareBtn.tier-bad::before {
   --ring-angle: 0deg;
-  background-image: conic-gradient(from var(--ring-angle), #6b0000, #8a1a1a, #6b0000);
+  background-image: conic-gradient(from var(--ring-angle), #2e2313, #453322, #2e2313);
 }
 
 #shareBtn.tier-bad:hover::before {
   animation: shareRingSpin 7s linear infinite;
-  filter: grayscale(0.3);
+  filter: grayscale(0.2);
 }
 
-/* terrible (<20): grayscale, barely moving — matches the 🥀 vibe */
+/* terrible (<20): grimy near-black, barely moving — matches the 🥀 vibe */
 #shareBtn.tier-terrible::before {
   --ring-angle: 0deg;
-  background-image: conic-gradient(from var(--ring-angle), #444, #777, #444);
-  filter: grayscale(0.8);
+  background-image: conic-gradient(from var(--ring-angle), #1c1a14, #302c22, #1c1a14);
+  filter: grayscale(0.6);
 }
 
 #shareBtn.tier-terrible:hover::before {
