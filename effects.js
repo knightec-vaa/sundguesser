@@ -263,6 +263,45 @@ function paintMudShareBackground(ctx, mud, W, H) {
   ctx.fillRect(0, 0, W, H);
 }
 
+// Draws text with a subtle gradient fill plus a fine "guilloché" micro-line
+// overlay clipped to the glyphs themselves (via source-atop compositing) —
+// the same trick passports/ID cards use so the number can't just be painted
+// over or retyped in an image editor without it looking obviously flat/off.
+// Not meant to be uncrackable, just enough extra effort to deter casual
+// score-faking of a shared screenshot.
+function drawSecureText(ctx, text, x, y, font, colors, seed) {
+  ctx.save();
+  ctx.font = font;
+  const fontSize = parseInt(font.match(/(\d+)px/)?.[1] || "24", 10);
+  const width = ctx.measureText(text).width;
+
+  const grad = ctx.createLinearGradient(x, y - fontSize, x + width, y);
+  colors.forEach((c, i) => grad.addColorStop(i / (colors.length - 1 || 1), c));
+  ctx.fillStyle = grad;
+  ctx.fillText(text, x, y);
+
+  // Fine diagonal micro-lines, only visible where the glyphs already have
+  // ink (source-atop), deterministic per seed so re-renders are stable.
+  ctx.save();
+  ctx.globalCompositeOperation = "source-atop";
+  const rng = mulberry32(seed);
+  const pad = fontSize * 0.4;
+  const top = y - fontSize - pad, bottom = y + pad;
+  const left = x - pad, right = x + width + pad;
+  ctx.lineWidth = 1;
+  const spacing = Math.max(2, fontSize * 0.08);
+  for (let lx = left - (bottom - top); lx < right; lx += spacing) {
+    const jitter = (rng() - 0.5) * 0.6;
+    ctx.strokeStyle = rng() > 0.5 ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.35)";
+    ctx.beginPath();
+    ctx.moveTo(lx + jitter, top);
+    ctx.lineTo(lx + (bottom - top) + jitter, bottom);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.restore();
+}
+
 // Tiny deterministic PRNG (mulberry32) so the mud-blotch layout is stable
 // per mud-tier rather than re-randomizing (and flickering) on every redraw.
 function mulberry32(seed) {

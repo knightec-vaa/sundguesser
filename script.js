@@ -602,9 +602,15 @@ function drawShareCanvas() {
   ctx.save();
   ctx.shadowColor = "rgba(0, 0, 0, 0.6)";
   ctx.shadowBlur = 10;
-  ctx.font = "bold 72px sans-serif";
-  ctx.fillStyle = "#ffd166";
-  ctx.fillText(`${finalScore}/100`, 28, 165);
+  drawSecureText(
+    ctx,
+    `${finalScore}/100`,
+    28,
+    165,
+    "bold 72px sans-serif",
+    ["#ffb347", "#ffe9b8", "#ffb347"],
+    hashSeed(`${activeGameDate}-${finalScore}`)
+  );
   ctx.restore();
 
   ctx.font = "48px sans-serif";
@@ -621,8 +627,15 @@ function drawShareCanvas() {
     ctx.fillStyle = "#ffffff";
     ctx.font = "13px sans-serif";
     ctx.fillText(`Round ${i + 1}`, x + 10, y + 22);
-    ctx.font = "bold 22px sans-serif";
-    ctx.fillText(`${s}`, x + 10, y + 52);
+    drawSecureText(
+      ctx,
+      `${s}`,
+      x + 10,
+      y + 52,
+      "bold 22px sans-serif",
+      ["#e8f0ff", "#ffffff", "#cfe0f5"],
+      hashSeed(`${activeGameDate}-round${i}-${s}`)
+    );
   });
 
   ctx.font = "13px sans-serif";
