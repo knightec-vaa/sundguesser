@@ -296,6 +296,18 @@ main {
   position: relative;
 }
 
+/* Extra top clearance (and right clearance on the heading) so the close (×)
+   button never sits on top of "Game Over!" — the shared 30px padding above
+   gets squeezed down to 16-20px on phones, which isn't enough room for the
+   button's own height. */
+#finalBox {
+  padding-top: 46px;
+}
+
+#finalBox h2 {
+  padding-right: 28px;
+}
+
 #resultBox {
   pointer-events: auto;
   padding: 16px 32px;
@@ -386,7 +398,8 @@ main {
   font-weight: bold;
 }
 
-/* Close (×) button in the top-right of the final score card. */
+/* Close (×) button in the top-right of the final score card. Sized/positioned
+   to guarantee clearance below it — see #finalBox padding-top below. */
 .close-btn {
   position: absolute;
   top: 8px;
@@ -861,6 +874,10 @@ body.shake {
     overflow-y: auto;
   }
 
+  #finalBox {
+    padding-top: 46px;
+  }
+
   #shareCardPreview {
     max-width: 100%;
   }
@@ -894,6 +911,10 @@ body.shake {
 
   #resultBox, #finalBox, #startBox {
     padding: 16px;
+  }
+
+  #finalBox {
+    padding-top: 44px;
   }
 
   #startActions button,
