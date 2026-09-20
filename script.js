@@ -920,21 +920,38 @@ function renderScoreHistory() {
 // explicitly presses a button here.
 function showStartGate() {
   const saved = getSavedScore(activeGameDate);
+  const latestDate = pickDefaultDate(manifestCache);
+  const isHistoricalGame = Boolean(latestDate && activeGameDate !== latestDate);
   const title = document.getElementById("startTitle");
   const subtitle = document.getElementById("startSubtitle");
   const viewBtn = document.getElementById("startViewScoreBtn");
   const playBtn = document.getElementById("startPlayBtn");
+  const latestBtn = document.getElementById("startLatestGameBtn");
 
   if (saved) {
-    title.textContent = "Already played today's game!";
+    title.textContent = isHistoricalGame
+      ? `Already played the ${activeGameDate} game!`
+      : "Already played today's game!";
     subtitle.textContent = `Your recorded score was ${saved.score}/100. You can replay for fun (it won't overwrite your official score), or view your saved result.`;
     playBtn.textContent = "🔁 Play Again";
     viewBtn.classList.remove("hidden");
   } else {
-    title.textContent = "Ready to play?";
+    title.textContent = isHistoricalGame
+      ? `Ready to play the ${activeGameDate} game?`
+      : "Ready to play?";
     subtitle.textContent = "5 rounds, 2 minutes each — the clock starts the moment you press Start.";
     playBtn.textContent = "▶ Start Game";
     viewBtn.classList.add("hidden");
+  }
+
+  if (isHistoricalGame) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    latestBtn.textContent = latestDate === todayStr
+      ? "📅 Play Today's Game"
+      : `📅 Play Latest Game (${latestDate})`;
+    latestBtn.classList.remove("hidden");
+  } else {
+    latestBtn.classList.add("hidden");
   }
 
   renderScoreHistory();
@@ -961,5 +978,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("startViewScoreBtn").addEventListener("click", () => {
     document.getElementById("startOverlay").classList.add("hidden");
     showSavedScoreOverlay(activeGameDate);
+  });
+  document.getElementById("startLatestGameBtn").addEventListener("click", () => {
+    const latestDate = pickDefaultDate(manifestCache);
+    if (latestDate) startGame(latestDate);
   });
 });
