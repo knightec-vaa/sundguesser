@@ -2,10 +2,10 @@ name: Fetch new locations
 
 on:
   schedule:
-    # Winter-time schedule: 02:00 Europe/Stockholm = 01:00 UTC.
-    # We intentionally keep one UTC trigger year-round to minimize Actions
-    # runs; during summer this starts at 03:00 Stockholm instead.
-    - cron: "0 1 * * *"
+    # Fixed UTC schedule every day, safely before game generation. A
+    # non-zero minute avoids GitHub Actions' busiest top-of-hour period.
+    # This is 00:17 Swedish summer time / 23:17 Swedish winter time.
+    - cron: "17 22 * * *"
   workflow_dispatch:
     inputs:
       count:
