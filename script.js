@@ -11,6 +11,7 @@ const ROUND_TIME_SECONDS = 120; // 2 minute time limit per round
 const HOT_STREAK_SCORE = 95; // score needed on a round to count towards a "hot" streak
 const COLD_STREAK_SCORE = 20; // score at/below which a round counts towards a "cold" streak
 const STREAK_MIN_LENGTH = 2; // rounds in a row needed before any streak effect shows
+const DAILY_STREAK_MIN_LENGTH = 2; // consecutive days played needed before the daily streak medal shows
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.4;
@@ -24,6 +25,7 @@ let manifestCache = null;
 let currentShareSeed = null;
 let currentShareCanvas = null;
 let currentMedals = [];
+let currentDailyStreak = 0;
 let currentAttemptNumber = 1;
 let roundTimerInterval = null;
 let roundTimerRemaining = ROUND_TIME_SECONDS;
@@ -142,6 +144,21 @@ function loadSavedScores() {
 
 function getSavedScore(date) {
   return loadSavedScores()[date] || null;
+}
+
+// Counts consecutive calendar days (ending at and including `date`) that
+// have a saved score, using the same YYYY-MM-DD keys saved scores are
+// stored under. Missing a day anywhere breaks the chain, so this rewards
+// showing up daily rather than just playing a lot overall.
+function computeDailyStreak(date, savedScores) {
+  const saved = savedScores || loadSavedScores();
+  let streak = 0;
+  const cursor = new Date(`${date}T00:00:00Z`);
+  while (saved[cursor.toISOString().slice(0, 10)]) {
+    streak++;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return streak;
 }
 
 // Only the FIRST time a given day's game is completed is the score kept —
@@ -604,6 +621,7 @@ function nextRound() {
     const { record, justSaved } = saveFirstScoreIfMissing(activeGameDate, finalScore, roundScores, medals);
     currentShareSeed = record.seed;
     currentMedals = record.medals || [];
+    currentDailyStreak = computeDailyStreak(activeGameDate);
     updateShareCardPreview();
     updateShareBtnTier(finalScore);
     document.getElementById("finalOverlay").classList.remove("hidden");
@@ -640,6 +658,7 @@ function showSavedScoreOverlay(date) {
   roundScores = record.roundScores;
   currentShareSeed = typeof record.seed === "number" ? record.seed : hashSeed(`${date}:${record.score}`);
   currentMedals = record.medals || [];
+  currentDailyStreak = computeDailyStreak(date);
   currentAttemptNumber = 1; // viewing the official recorded result, not a new attempt
 
   document.getElementById("finalScore").textContent =
@@ -802,14 +821,18 @@ function drawShareCanvas() {
   ctx.fillText(shareSiteUrl(), W - 28, H - 18);
   ctx.textAlign = "left";
 
-  // Speed/efficiency medal badges, if earned — small pills sitting between
-  // the round breakdown and the footer link.
-  if (currentMedals.length) {
+  // Speed/efficiency medal badges, if earned, plus the daily play-streak
+  // badge — all drawn as the same style of pill, sitting between the round
+  // breakdown and the footer link.
+  const badgePills = currentMedals.map((medal) => `${medal.icon} ${medal.label}`);
+  if (currentDailyStreak >= DAILY_STREAK_MIN_LENGTH) {
+    badgePills.push(`🔥 ${currentDailyStreak} Day Streak`);
+  }
+  if (badgePills.length) {
     let mx = 28;
     const my = 284;
     ctx.font = "bold 13px sans-serif";
-    currentMedals.forEach((medal) => {
-      const label = `${medal.icon} ${medal.label}`;
+    badgePills.forEach((label) => {
       const textW = ctx.measureText(label).width;
       const pillW = textW + 22;
       drawRoundedRect(ctx, mx, my, pillW, 24, 12);
@@ -938,6 +961,7 @@ async function startGame(requestedDate) {
     coldStreak = 0;
     currentShareSeed = null;
     currentMedals = [];
+    currentDailyStreak = 0;
     updateHud();
     // Don't jump straight into round 1 (which would both spoil the photo
     // and silently start the 2-minute timer) — show a start gate first so
