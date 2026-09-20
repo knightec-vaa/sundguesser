@@ -722,11 +722,19 @@ function nextRound() {
     const { record, justSaved } = saveFirstScoreIfMissing(
       activeGameDate, finalScore, roundScores, medals, roundHardFlags, bestHotStreak, worstColdStreak
     );
+    // The share card always reflects the attempt actually being displayed
+    // right now — the fresh finalScore/medals/streaks just computed above —
+    // never the old frozen record, even on a replay. Only the permanently
+    // saved *official* score (record.score, shown in firstScoreNote below)
+    // stays pinned to whatever was first recorded for this day. The "Nth
+    // TRY" stamp on the card (driven by currentAttemptNumber) is what makes
+    // clear a replay's card isn't the official result, so showing the real
+    // fresh numbers here is safe and expected.
     currentShareSeed = record.seed;
-    currentMedals = record.medals || [];
-    currentShareScore = record.score;
-    currentBestHotStreak = record.bestHotStreak || 0;
-    currentWorstColdStreak = record.worstColdStreak || 0;
+    currentMedals = medals;
+    currentShareScore = finalScore;
+    currentBestHotStreak = bestHotStreak || 0;
+    currentWorstColdStreak = worstColdStreak || 0;
     currentDailyStreak = computeDailyStreak(activeGameDate);
     currentIsSundmaster = currentShareScore > 100;
     applyFinalTitle(currentIsSundmaster);
