@@ -82,10 +82,22 @@ function roundIsHard(location, index) {
   return index === roundLocations.length - 1;
 }
 
+// Phones show a much smaller slice of the map than desktops at the same zoom
+// level, so the regional "helping" frame has to pull back further there to keep
+// the same amount of context on screen.
+function responsiveZoomOffset() {
+  const width = map && map.getSize ? map.getSize().x : window.innerWidth;
+  if (width < 420) return 1.5;
+  if (width < 620) return 1;
+  if (width < 820) return 0.5;
+  return 0;
+}
+
 function frameMapForRound(location) {
   const distance = haversineDistance(CITY_CENTER[0], CITY_CENTER[1], location.lat, location.lng);
+  const offset = responsiveZoomOffset();
   if (distance < 2500) {
-    map.setView(CITY_CENTER, 12);
+    map.setView(CITY_CENTER, 12 - offset);
     return;
   }
 
@@ -97,7 +109,7 @@ function frameMapForRound(location) {
     (CITY_CENTER[1] + location.lng) / 2
   ];
   const zoom = distance > 18000 ? 9.5 : distance > 9000 ? 10.5 : 11;
-  map.setView(center, zoom);
+  map.setView(center, Math.max(8, zoom - offset));
 }
 
 // Distance -> 0-100 percentage score. Close guesses round up to 100; far guesses decay to 0.
@@ -185,7 +197,9 @@ function setDateInUrl(date) {
 }
 
 function initMap() {
-  map = L.map("map").setView([62.392, 17.307], 12);
+  // zoomSnap 0.5 keeps the half-step zoom levels used by frameMapForRound()
+  // from being rounded away.
+  map = L.map("map", { zoomSnap: 0.5 }).setView([62.392, 17.307], 12);
   // Official OpenStreetMap tile server — no API key required. Subject to the
   // OSM tile usage policy (reasonable request volume, proper attribution).
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
