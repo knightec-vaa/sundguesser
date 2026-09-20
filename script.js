@@ -834,6 +834,34 @@ async function shareResult() {
   const shareUrl = shareSiteUrl();
   canvas.toBlob(async (blob) => {
     if (!blob) return;
+    const file = new File([blob], `sundguesser-${activeGameDate || "result"}.png`, { type: "image/png" });
+
+    // On Android (and iOS Safari), navigator.share() with a file opens the
+    // native share sheet with the actual image attached — this is what most
+    // players expect "share" to do. Try it first. navigator.clipboard.write()
+    // only *copies* the image, and several Android apps' paste targets (and
+    // some share-sheet integrations) prefer the plain-text clipboard entry
+    // over the image one, which is why the link was winning over the image.
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: "SundGuesser",
+          text: shareUrl
+        });
+        status.textContent = "Shared!";
+        return;
+      } catch (err) {
+        // AbortError means the user just closed the share sheet — not a
+        // failure, so don't fall through to clipboard/download noise.
+        if (err && err.name === "AbortError") {
+          status.textContent = "";
+          return;
+        }
+        // Any other error (e.g. unsupported file type) falls through below.
+      }
+    }
+
     try {
       if (navigator.clipboard && window.ClipboardItem) {
         // Write both the image and the site link as separate clipboard
