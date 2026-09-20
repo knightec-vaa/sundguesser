@@ -3,6 +3,13 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [master, main]
+  # Commits pushed by daily-game.yml use GitHub's built-in GITHUB_TOKEN,
+  # which intentionally does not trigger another workflow's `push` event.
+  # Run Pages after that workflow completes so each published game becomes
+  # available without requiring a separate personal access token.
+  workflow_run:
+    workflows: ["Generate daily game"]
+    types: [completed]
   workflow_dispatch: {}
 
 permissions:
@@ -16,6 +23,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
