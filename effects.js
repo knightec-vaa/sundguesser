@@ -52,10 +52,13 @@ function launchFartEffect(count = 18) {
 
 // Streak effects: a shimmering gold sparkle burst for a hot (>=95) streak of
 // 2+ rounds, or a slow grey "raindrop" burst for a cold (<=20) streak of 2+
-// rounds. `strong` (3+ in a row) means more particles and a bigger visual.
-function launchStreakEffect(kind, strong = false) {
+// rounds. `level` (1-4, see streakLevel() in script.js) scales both the
+// particle count and size, so the effect keeps escalating all the way up to
+// a perfect 5-round run instead of capping out after the 3rd round.
+function launchStreakEffect(kind, level = 1) {
   const layer = getFxLayer();
-  const count = strong ? 40 : 22;
+  const count = 14 + level * 10;
+  const fontScale = 1 + (level - 1) * 0.18;
 
   for (let i = 0; i < count; i++) {
     const piece = document.createElement("div");
@@ -67,7 +70,7 @@ function launchStreakEffect(kind, strong = false) {
       : `${1.6 + Math.random() * 1.0}s`;
     piece.style.animationDelay = `${Math.random() * 0.35}s`;
     piece.style.setProperty("--drift", `${(Math.random() - 0.5) * (kind === "gold" ? 160 : 60)}px`);
-    if (strong) piece.style.fontSize = "1.4em";
+    piece.style.fontSize = `${fontScale}em`;
     layer.appendChild(piece);
     piece.addEventListener("animationend", () => piece.remove());
   }
@@ -176,12 +179,52 @@ function themeForScore(score) {
   return SHARE_THEME_GRIME;
 }
 
-function paintShareBackground(ctx, theme, W, H, score) {
+function paintShareBackground(ctx, theme, W, H, score, date) {
   if (theme.wave === "mud" || theme.wave === "grime") {
-    paintEmbarrassingShareBackground(ctx, theme.wave, W, H, score);
+    paintEmbarrassingShareBackground(ctx, theme.wave, W, H, score, date);
   } else {
-    paintWaveShareBackground(ctx, theme.wave, W, H, score);
+    paintWaveShareBackground(ctx, theme.wave, W, H, score, date);
   }
+}
+
+// SUNDMASTER celebration layer: scatters the Medelpad coat-of-arms icon
+// (plus a few festive emoji) across the whole card at low opacity, with
+// slight per-tile rotation/size jitter so it reads as an exciting confetti
+// pattern rather than a stiff grid. Seeded by seedKey (the game date) so
+// re-rendering the same day's card is always pixel-identical. Drawn on top
+// of the normal tier background but before any text/panels, which already
+// have their own drop shadows/scrims and stay fully legible on top of it.
+function paintSundmasterOverlay(ctx, W, H, iconImg, seedKey) {
+  const rng = mulberry32(hashSeed(`sundmaster-${seedKey}`));
+  const bonusIcons = ["✨", "👑", "🏆", "🐐"];
+  const hasIcon = iconImg && iconImg.complete && iconImg.naturalWidth > 0;
+  const cols = 7, rows = 4;
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cx = ((c + 0.5) / cols) * W + (rng() - 0.5) * 30;
+      const cy = ((r + 0.5) / rows) * H + (rng() - 0.5) * 30;
+      const rot = (rng() - 0.5) * 0.9;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rot);
+      // Roughly 1-in-3 tiles use a bonus emoji instead of the coat of arms,
+      // so the pattern feels varied rather than a single repeated stamp.
+      if (hasIcon && rng() > 0.32) {
+        const size = 26 + rng() * 10;
+        ctx.drawImage(iconImg, -size / 2, -size / 2, size, size * (iconImg.naturalHeight / iconImg.naturalWidth));
+      } else {
+        const icon = bonusIcons[Math.floor(rng() * bonusIcons.length)];
+        ctx.font = `${22 + Math.floor(rng() * 12)}px sans-serif`;
+        ctx.fillText(icon, 0, 0);
+      }
+      ctx.restore();
+    }
+  }
+  ctx.restore();
 }
 
 // Each tier gets a deep base gradient plus a 3-color band trio. The
@@ -235,11 +278,15 @@ const WAVE_PALETTES = {
   },
 };
 
-// Picks a variant band trio for a tier deterministically from the exact
-// score (so e.g. 82 and 91 — both "silver" — get a slightly different
-// palette flavor) rather than every score in a tier looking identical.
-function pickVariant(list, score) {
-  return list[hashSeed(`variant-${score}`) % list.length];
+// Picks a variant band trio/stamp text deterministically from the game's
+// date (falling back to the score if no date is available) so every card
+// for the SAME day always renders with the exact same color combo — and a
+// different day (even at an identical score/tier) looks noticeably
+// different. That makes it easy to eyeball whether a shared screenshot's
+// color scheme actually matches the day it claims to be from, rather than
+// being an old result passed off as today's.
+function pickVariant(list, seedKey) {
+  return list[hashSeed(`variant-${seedKey}`) % list.length];
 }
 
 
@@ -266,16 +313,17 @@ function drawWaveBand(ctx, W, yBase, amplitude, wavelength, phase, thickness, fi
 // Paints the whole share-card background: a deep gradient base plus 3
 // horizontal wavy bands (deterministic per tier, stable across re-renders),
 // then a dark scrim so text stays legible over any tier.
-function paintWaveShareBackground(ctx, tier, W, H, score) {
+function paintWaveShareBackground(ctx, tier, W, H, score, date) {
   const p = WAVE_PALETTES[tier];
-  const bands = pickVariant(p.variants, score);
+  const variantSeed = date || score;
+  const bands = pickVariant(p.variants, variantSeed);
   const base = ctx.createLinearGradient(0, 0, 0, H);
   base.addColorStop(0, p.base[0]);
   base.addColorStop(1, p.base[1]);
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, W, H);
 
-  const rng = mulberry32(hashSeed(`${tier}-wave-${score}`));
+  const rng = mulberry32(hashSeed(`${tier}-wave-${variantSeed}`));
   const bandSpecs = [
     { yFrac: 0.32, amp: 16, thickness: 34, alpha: p.shiny ? 0.85 : 0.6 },
     { yFrac: 0.55, amp: 20, thickness: 30, alpha: p.shiny ? 0.75 : 0.5 },
@@ -328,9 +376,10 @@ const SHAME_STAMPS = {
   grime: { texts: ["OOF", "YIKES", "0/10", "RIP"], flat: "#3a372c", stampColor: "rgba(200, 20, 20, 0.5)", crackColor: "rgba(0,0,0,0.6)" },
 };
 
-function paintEmbarrassingShareBackground(ctx, tier, W, H, score) {
+function paintEmbarrassingShareBackground(ctx, tier, W, H, score, date) {
   const s = SHAME_STAMPS[tier];
-  const stampText = pickVariant(s.texts, score);
+  const variantSeed = date || score;
+  const stampText = pickVariant(s.texts, variantSeed);
 
   // Flat, deliberately dull/sickly color — no gradient, no shine.
   ctx.fillStyle = s.flat;
@@ -338,7 +387,7 @@ function paintEmbarrassingShareBackground(ctx, tier, W, H, score) {
 
   // Harsh jagged crack lines (unlike the smooth waves used for a decent
   // score) — visually says "something broke here."
-  const rng = mulberry32(hashSeed(`${tier}-crack-${score}`));
+  const rng = mulberry32(hashSeed(`${tier}-crack-${variantSeed}`));
   const crackCount = tier === "grime" ? 7 : 5;
   ctx.save();
   ctx.strokeStyle = s.crackColor;

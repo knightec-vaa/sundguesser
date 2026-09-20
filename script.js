@@ -26,11 +26,27 @@ let currentShareSeed = null;
 let currentShareCanvas = null;
 let currentMedals = [];
 let currentDailyStreak = 0;
+let currentBestHotStreak = 0; // whichever run's showcase streak is on screen
+                               // right now (live or a saved record) — used by
+                               // the share card, set explicitly like
+                               // currentShareScore, never recomputed.
+let currentWorstColdStreak = 0; // same idea, for the roast badge.
 let currentAttemptNumber = 1;
 let roundTimerInterval = null;
 let roundTimerRemaining = ROUND_TIME_SECONDS;
 let hotStreak = 0;
 let coldStreak = 0;
+let bestHotStreak = 0; // longest hot streak reached this playthrough, for the
+                        // final-card "showcase" badge
+let worstColdStreak = 0; // longest cold streak reached this playthrough, for
+                          // the final-card "roast" badge — shown deliberately
+                          // so friends can clown on a bad run
+let roundHardFlags = []; // per-round difficulty flag, aligned by index with
+                          // roundScores/roundTimesTaken/roundZoomUsed. Used
+                          // only internally (e.g. the "Hard Round Hero"
+                          // medal) — never surfaced per-round in the UI,
+                          // since "hard" is a design guess, not a verified
+                          // fact about any individual round.
 
 // Per-round speed/efficiency tracking, used for the "medal" badges on the
 // share card (fast guesser / never needed to zoom in). Reset per game in
@@ -164,12 +180,24 @@ function computeDailyStreak(date, savedScores) {
 // Only the FIRST time a given day's game is completed is the score kept —
 // replays don't overwrite your official result for that day. A random seed
 // is stored alongside it so the share-card background stays consistent
-// whenever this score is viewed again later.
-function saveFirstScoreIfMissing(date, score, scores, medals) {
+// whenever this score is viewed again later. hardFlags is kept purely for
+// internal medal bookkeeping (never surfaced per-round in the UI).
+// bestHotStreak/worstColdStreak capture the most impressive/embarrassing
+// in-run streak reached, for the showcase/roast badges on the share card.
+function saveFirstScoreIfMissing(date, score, scores, medals, hardFlags, bestHotStreak, worstColdStreak) {
   const saved = loadSavedScores();
   if (saved[date]) return { record: saved[date], justSaved: false };
   const seed = Math.floor(Math.random() * 1e9);
-  const record = { score, roundScores: scores, recordedAt: new Date().toISOString(), seed, medals: medals || [] };
+  const record = {
+    score,
+    roundScores: scores,
+    recordedAt: new Date().toISOString(),
+    seed,
+    medals: medals || [],
+    hardFlags: hardFlags || [],
+    bestHotStreak: bestHotStreak || 0,
+    worstColdStreak: worstColdStreak || 0
+  };
   saved[date] = record;
   localStorage.setItem(SCORES_STORAGE_KEY, JSON.stringify(saved));
   return { record, justSaved: true };
@@ -446,6 +474,7 @@ function loadRound() {
   resetZoom();
 
   const isHardRound = roundIsHard(loc, currentRoundIndex);
+  roundHardFlags[currentRoundIndex] = isHardRound;
   document.getElementById("photoPane").classList.toggle("hard-round", isHardRound);
   const areaHint = document.getElementById("roundAreaHint");
   areaHint.textContent = `📍 Area: ${roundAreaLabel(loc)}`;
@@ -545,51 +574,106 @@ function makeGuess(opts = {}) {
 
 // Tracks consecutive hot (>=95) or cold (<=20) rounds *within the current
 // game*. Breaking a streak (a round that's neither) resets both counters.
+// bestHotStreak/worstColdStreak remember the longest streak of each kind
+// reached at any point this game, for the end-of-game showcase/roast badge
+// — those don't reset when the in-progress streak breaks.
 function updateStreaks(points) {
   if (points >= HOT_STREAK_SCORE) {
     hotStreak++;
     coldStreak = 0;
+    bestHotStreak = Math.max(bestHotStreak, hotStreak);
   } else if (points <= COLD_STREAK_SCORE) {
     coldStreak++;
     hotStreak = 0;
+    worstColdStreak = Math.max(worstColdStreak, coldStreak);
   } else {
     hotStreak = 0;
     coldStreak = 0;
   }
 }
 
-// Shows a gold shimmering border (getting shinier at 3+) for a hot streak,
-// or a gloomy "sad" border (getting heavier at 3+) for a cold streak, on the
-// per-round result popup. Also spawns a matching particle burst.
+// Streak "levels" 1-4, one per possible streak length from STREAK_MIN_LENGTH
+// (2) up to ROUND_COUNT (5 — a perfect run, every round hot or cold). Each
+// level gets an increasingly intense gold (or gloomy) treatment so the
+// visual keeps escalating round by round instead of capping out at "strong".
+function streakLevel(length) {
+  return Math.max(1, Math.min(4, length - STREAK_MIN_LENGTH + 1));
+}
+
+// Shows a gold shimmering border — getting shinier/faster at each streak
+// length up to a perfect run — for a hot streak, or an increasingly gloomy
+// "sad" border for a cold streak, on the per-round result popup. Also
+// spawns a matching particle burst that scales with the same level.
 function applyStreakVisuals() {
   const box = document.getElementById("resultBox");
   const badge = document.getElementById("streakBadge");
-  box.classList.remove("streak-gold", "streak-gold-strong", "streak-sad", "streak-sad-strong");
+  box.classList.remove(
+    "streak-gold-1", "streak-gold-2", "streak-gold-3", "streak-gold-4",
+    "streak-sad-1", "streak-sad-2", "streak-sad-3", "streak-sad-4"
+  );
   badge.classList.add("hidden");
 
   if (hotStreak >= STREAK_MIN_LENGTH) {
-    const strong = hotStreak >= 3;
-    box.classList.add(strong ? "streak-gold-strong" : "streak-gold");
+    const level = streakLevel(hotStreak);
+    box.classList.add(`streak-gold-${level}`);
     badge.textContent = `✨ Hot streak x${hotStreak}!`;
     badge.classList.remove("hidden");
-    launchStreakEffect("gold", strong);
+    launchStreakEffect("gold", level);
   } else if (coldStreak >= STREAK_MIN_LENGTH) {
-    const strong = coldStreak >= 3;
-    box.classList.add(strong ? "streak-sad-strong" : "streak-sad");
+    const level = streakLevel(coldStreak);
+    box.classList.add(`streak-sad-${level}`);
     badge.textContent = `😢 Cold streak x${coldStreak}...`;
     badge.classList.remove("hidden");
-    launchStreakEffect("sad", strong);
+    launchStreakEffect("sad", level);
   }
 }
 
-function finalScoreValue() {
+// Bonus points awarded per earned medal, added on top of the plain
+// round-average score (capped back down to 100). Only applies to scores
+// computed by a live playthrough right now — a previously saved/recorded
+// score (from before this feature existed, or from any earlier day) is
+// never recalculated or bumped after the fact. That keeps every day's
+// official score permanently comparable to itself; only a brand-new
+// playthrough (whether of today or of an old date nobody has played yet)
+// uses the current bonus rules.
+const MEDAL_BONUS_PER_MEDAL = 5;
+
+// The score actually rendered on the share card / share button tier for
+// whatever is currently on screen. Sourced explicitly by whichever flow
+// currently owns it — nextRound() sets it to the freshly computed (and
+// possibly medal-bonused) live score, showSavedScoreOverlay() sets it to
+// the exact score that was permanently recorded for that day. Never
+// recomputed implicitly, so a historical score can't accidentally drift.
+let currentShareScore = 0;
+
+// True once a score has been pushed past the normal 100 ceiling by stacking
+// medal bonuses on a flawless run — the rare "SUNDMASTER" achievement.
+// Same explicit-state pattern as currentShareScore: set by whichever flow
+// currently owns the display, never inferred at render time.
+let currentIsSundmaster = false;
+
+// Swaps the "Game Over!" heading for a celebratory SUNDMASTER title (and
+// toggles the matching background flourish) when a perfect-plus score was
+// reached. Cheap DOM toggle, safe to call from both the live-finish and
+// historical-replay paths.
+function applyFinalTitle(isSundmaster) {
+  const titleEl = document.getElementById("finalTitle");
+  const boxEl = document.getElementById("finalBox");
+  if (titleEl) titleEl.textContent = isSundmaster ? "🏆 SUNDMASTER!" : "Game Over!";
+  if (boxEl) boxEl.classList.toggle("sundmaster", isSundmaster);
+}
+
+function baseScoreValue() {
   return Math.round(roundScores.reduce((a, b) => a + b, 0) / roundScores.length);
 }
 
 // Speed/efficiency "medals" for the share card — only awarded on a decent
 // score so a lucky-fast-but-terrible guess doesn't get rewarded. Based on
 // average time taken per round and whether the photo was ever zoomed/panned.
-function computeMedals(score, times, zoomUsed) {
+// hardFlags/scores (both indexed the same way as times/zoomUsed) let a
+// separate medal reward being fast AND accurate specifically on the hard
+// round(s) of the day, which is a tougher bar than the overall averages.
+function computeMedals(score, times, zoomUsed, hardFlags, scores) {
   if (!times || !times.length || score < 60) return [];
   const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
   const medals = [];
@@ -598,6 +682,15 @@ function computeMedals(score, times, zoomUsed) {
   if (zoomUsed && zoomUsed.length && zoomUsed.every((z) => !z)) {
     medals.push({ icon: "🧭", label: "True Local" });
   }
+  if (hardFlags && hardFlags.length && scores && scores.length) {
+    const hardIndexes = hardFlags.reduce((acc, isHard, i) => {
+      if (isHard) acc.push(i);
+      return acc;
+    }, []);
+    const wasFastAndAccurate = hardIndexes.length > 0 &&
+      hardIndexes.every((i) => times[i] <= 20 && scores[i] >= 70);
+    if (wasFastAndAccurate) medals.push({ icon: "🔥", label: "Hard Round Hero" });
+  }
   return medals;
 }
 
@@ -605,25 +698,40 @@ function nextRound() {
   currentRoundIndex++;
   if (currentRoundIndex >= ROUND_COUNT) {
     document.getElementById("resultOverlay").classList.add("hidden");
-    const finalScore = finalScoreValue();
+
+    const baseScore = baseScoreValue();
+    const medals = computeMedals(baseScore, roundTimesTaken, roundZoomUsed, roundHardFlags, roundScores);
+    // Medal bonus is only ever applied to a fresh live playthrough happening
+    // right now — see the MEDAL_BONUS_PER_MEDAL comment above. Deliberately
+    // NOT capped at 100: stacking every medal on a flawless run can push
+    // past 100, which is the whole point — that's what unlocks the
+    // SUNDMASTER title/celebration below. A plain 100 stays a plain 100.
+    const finalScore = baseScore + medals.length * MEDAL_BONUS_PER_MEDAL;
+    const isSundmaster = finalScore > 100;
 
     const finalScoreEl = document.getElementById("finalScore");
     animateScoreCountUp(finalScoreEl, finalScore, {
       prefix: "Final Score: ",
-      suffix: ` / 100 ${scoreEmoji(finalScore)}`
+      suffix: ` / 100 ${scoreEmoji(finalScore)}${finalScore === 0 ? " 🥀" : ""}`
     });
     playScoreEffect(finalScore);
 
     renderRoundBreakdown();
 
     currentAttemptNumber = bumpAttempt(activeGameDate);
-    const medals = computeMedals(finalScore, roundTimesTaken, roundZoomUsed);
-    const { record, justSaved } = saveFirstScoreIfMissing(activeGameDate, finalScore, roundScores, medals);
+    const { record, justSaved } = saveFirstScoreIfMissing(
+      activeGameDate, finalScore, roundScores, medals, roundHardFlags, bestHotStreak, worstColdStreak
+    );
     currentShareSeed = record.seed;
     currentMedals = record.medals || [];
+    currentShareScore = record.score;
+    currentBestHotStreak = record.bestHotStreak || 0;
+    currentWorstColdStreak = record.worstColdStreak || 0;
     currentDailyStreak = computeDailyStreak(activeGameDate);
+    currentIsSundmaster = currentShareScore > 100;
+    applyFinalTitle(currentIsSundmaster);
     updateShareCardPreview();
-    updateShareBtnTier(finalScore);
+    updateShareBtnTier(currentShareScore);
     document.getElementById("finalOverlay").classList.remove("hidden");
 
     const noteEl = document.getElementById("firstScoreNote");
@@ -650,19 +758,28 @@ function renderRoundBreakdown() {
 
 // Re-displays a previously saved (first) score for the given day, e.g. after
 // accidentally closing the final overlay. Does not re-save or affect the
-// in-progress round state.
+// in-progress round state, and — critically — never recomputes the score:
+// it always shows exactly what was permanently recorded for that day, so
+// old days stay comparable to themselves even as the live scoring rules
+// (like the medal bonus) evolve.
 function showSavedScoreOverlay(date) {
   const record = getSavedScore(date);
   if (!record) return;
 
   roundScores = record.roundScores;
+  roundHardFlags = record.hardFlags || [];
   currentShareSeed = typeof record.seed === "number" ? record.seed : hashSeed(`${date}:${record.score}`);
   currentMedals = record.medals || [];
+  currentShareScore = record.score;
+  currentBestHotStreak = record.bestHotStreak || 0;
+  currentWorstColdStreak = record.worstColdStreak || 0;
   currentDailyStreak = computeDailyStreak(date);
+  currentIsSundmaster = record.score > 100;
   currentAttemptNumber = 1; // viewing the official recorded result, not a new attempt
 
+  applyFinalTitle(currentIsSundmaster);
   document.getElementById("finalScore").textContent =
-    `Final Score: ${record.score} / 100 ${scoreEmoji(record.score)}`;
+    `Final Score: ${record.score} / 100 ${scoreEmoji(record.score)}${record.score === 0 ? " 🥀" : ""}`;
   renderRoundBreakdown();
   updateShareCardPreview();
   updateShareBtnTier(record.score);
@@ -706,9 +823,19 @@ function drawShareCanvas() {
   canvas.height = H;
   const ctx = canvas.getContext("2d");
 
-  const shareScore = finalScoreValue();
+  const shareScore = currentShareScore;
   const theme = themeForScore(shareScore);
-  paintShareBackground(ctx, theme, W, H, shareScore);
+  paintShareBackground(ctx, theme, W, H, shareScore, activeGameDate);
+
+  // SUNDMASTER: a flawless run stacked with medal bonuses pushed the score
+  // past the normal 100 ceiling. Tile the Medelpad coat-of-arms icon (plus
+  // a couple of celebratory emoji) scattered across the card at low
+  // opacity, seeded by date so re-sharing the same day's card always looks
+  // identical. Drawn after the themed background but before any text, so
+  // it reads as festive texture rather than obscuring the score.
+  if (currentIsSundmaster) {
+    paintSundmasterOverlay(ctx, W, H, headerIconImg, activeGameDate || String(shareScore));
+  }
 
   ctx.save();
   ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
@@ -724,9 +851,15 @@ function drawShareCanvas() {
   }
   ctx.restore();
 
-  ctx.font = "16px sans-serif";
-  ctx.fillStyle = "#c9d6e3";
-  ctx.fillText(activeGameDate ? `Game of ${activeGameDate}` : "", 28, 78);
+  ctx.font = currentIsSundmaster ? "bold 16px sans-serif" : "16px sans-serif";
+  ctx.fillStyle = currentIsSundmaster ? "#ffd166" : "#c9d6e3";
+  ctx.fillText(
+    activeGameDate
+      ? (currentIsSundmaster ? `🏆 SUNDMASTER! · ${activeGameDate}` : `Game of ${activeGameDate}`)
+      : "",
+    28,
+    78
+  );
 
   // Weekday pin chip, top-right.
   if (activeGameDate) {
@@ -770,7 +903,7 @@ function drawShareCanvas() {
   // A translucent dark panel behind the big score number keeps it legible
   // no matter how bright/light the theme is (e.g. gold-on-gold, or the
   // silver stripe in the "flagg" theme).
-  const finalScore = finalScoreValue();
+  const finalScore = currentShareScore;
   drawRoundedRect(ctx, 20, 96, 300, 78, 12);
   ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
   ctx.fill();
@@ -792,6 +925,13 @@ function drawShareCanvas() {
   ctx.font = "48px sans-serif";
   ctx.fillStyle = "#ffffff";
   ctx.fillText(scoreEmoji(finalScore), 340, 155);
+  if (finalScore === 0) {
+    // A total zero gets an extra wilted rose right next to the tier emoji
+    // (which is already 🥀 for any "terrible" score) to make an actual
+    // goose-egg unmistakably, comedically worse than merely "bad".
+    ctx.font = "40px sans-serif";
+    ctx.fillText("🥀", 395, 150);
+  }
 
   ctx.font = "16px sans-serif";
   ctx.fillStyle = "#ffffff";
@@ -821,22 +961,34 @@ function drawShareCanvas() {
   ctx.fillText(shareSiteUrl(), W - 28, H - 18);
   ctx.textAlign = "left";
 
-  // Speed/efficiency medal badges, if earned, plus the daily play-streak
-  // badge — all drawn as the same style of pill, sitting between the round
-  // breakdown and the footer link.
-  const badgePills = currentMedals.map((medal) => `${medal.icon} ${medal.label}`);
+  // Speed/efficiency medal badges, the daily play-streak badge, and the
+  // in-game hot/cold streak badges — all drawn as the same style of pill,
+  // sitting between the round breakdown and the footer link. The "showcase"
+  // hot-streak pill gets a warm gold-tinted background to celebrate a great
+  // run; the "roast" cold-streak pill deliberately gets a loud red-tinted
+  // background so a bad run stands out and friends can have a laugh at it.
+  const NORMAL_PILL_BG = "rgba(0, 0, 0, 0.4)";
+  const GOLD_PILL_BG = "rgba(255, 179, 71, 0.35)";
+  const ROAST_PILL_BG = "rgba(220, 50, 50, 0.45)";
+  const badgePills = currentMedals.map((medal) => ({ label: `${medal.icon} ${medal.label}`, bg: NORMAL_PILL_BG }));
+  if (currentBestHotStreak >= STREAK_MIN_LENGTH) {
+    badgePills.push({ label: `✨ Streak x${currentBestHotStreak}`, bg: GOLD_PILL_BG });
+  }
+  if (currentWorstColdStreak >= STREAK_MIN_LENGTH) {
+    badgePills.push({ label: `🥶 Ice Cold x${currentWorstColdStreak}`, bg: ROAST_PILL_BG });
+  }
   if (currentDailyStreak >= DAILY_STREAK_MIN_LENGTH) {
-    badgePills.push(`🔥 ${currentDailyStreak} Day Streak`);
+    badgePills.push({ label: `🔥 ${currentDailyStreak} Day Streak`, bg: NORMAL_PILL_BG });
   }
   if (badgePills.length) {
     let mx = 28;
     const my = 284;
     ctx.font = "bold 13px sans-serif";
-    badgePills.forEach((label) => {
+    badgePills.forEach(({ label, bg }) => {
       const textW = ctx.measureText(label).width;
       const pillW = textW + 22;
       drawRoundedRect(ctx, mx, my, pillW, 24, 12);
-      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+      ctx.fillStyle = bg;
       ctx.fill();
       ctx.fillStyle = "#ffffff";
       ctx.fillText(label, mx + 11, my + 17);
@@ -957,11 +1109,18 @@ async function startGame(requestedDate) {
     roundScores = [];
     roundTimesTaken = [];
     roundZoomUsed = [];
+    roundHardFlags = [];
     hotStreak = 0;
     coldStreak = 0;
+    bestHotStreak = 0;
+    worstColdStreak = 0;
     currentShareSeed = null;
     currentMedals = [];
+    currentBestHotStreak = 0;
+    currentWorstColdStreak = 0;
     currentDailyStreak = 0;
+    currentIsSundmaster = false;
+    applyFinalTitle(false);
     updateHud();
     // Don't jump straight into round 1 (which would both spoil the photo
     // and silently start the 2-minute timer) — show a start gate first so
