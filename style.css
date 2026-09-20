@@ -415,7 +415,7 @@ main {
   line-height: 0;
 }
 
-#shareCardPreview canvas {
+#shareCardPreview img {
   display: block;
   width: 100%;
   height: auto;

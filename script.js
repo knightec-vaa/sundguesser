@@ -653,15 +653,22 @@ function showSavedScoreOverlay(date) {
   document.getElementById("finalOverlay").classList.remove("hidden");
 }
 
-// Renders the share card into the visible #shareCardPreview container (so
-// players see exactly what gets copied) and keeps a reference to that same
-// canvas so shareResult() copies the identical image instead of redrawing.
+// Renders the share card into the visible #shareCardPreview container. We
+// display an <img> (not the raw canvas) because mobile browsers — Firefox
+// for Android in particular — only offer the native long-press "Save/Share
+// image" context menu for actual <img> elements; a canvas is invisible to
+// that menu even though it looks identical. The canvas itself is kept
+// in-memory only, so shareResult() can still read its exact pixels for the
+// clipboard/share/download paths.
 function updateShareCardPreview() {
   currentShareCanvas = drawShareCanvas();
   const container = document.getElementById("shareCardPreview");
   if (!container) return;
   container.innerHTML = "";
-  container.appendChild(currentShareCanvas);
+  const img = document.createElement("img");
+  img.src = currentShareCanvas.toDataURL("image/png");
+  img.alt = "SundGuesser result share card";
+  container.appendChild(img);
 }
 
 // Swaps the share button's animated border tier to match how good the
@@ -886,7 +893,7 @@ async function shareResult() {
       a.download = `sundguesser-${activeGameDate || "result"}.png`;
       a.click();
       URL.revokeObjectURL(url);
-      status.textContent = "Clipboard copy isn't supported here — downloaded the image instead.";
+      status.textContent = "Downloaded the image — or long-press the preview above to save/share it directly.";
     }
   }, "image/png");
 }
