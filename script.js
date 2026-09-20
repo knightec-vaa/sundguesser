@@ -834,28 +834,11 @@ function shareSiteUrl() {
 
 // Firefox for Android accepts a multi-part ClipboardItem (image + text)
 // without throwing, but silently drops the image part and only copies the
-// text/plain entry — so shareResult() would report "Image copied!" while
-// only the link actually landed on the clipboard. There's no reliable way
-// to detect this after the fact (write() resolves normally), so we
-// feature-detect ahead of time: ClipboardItem.supports() is the standards
-// track way to ask "can you actually write this mime type", and where
-// that's unavailable we know from testing that Firefox on Android cannot,
-// so we skip straight to the download fallback for that combination.
-function clipboardImageWriteSupported() {
-  if (!navigator.clipboard || !window.ClipboardItem) return false;
-  if (typeof ClipboardItem.supports === "function") {
-    try {
-      return ClipboardItem.supports("image/png");
-    } catch (err) {
-      return false;
-    }
-  }
-  const ua = navigator.userAgent || "";
-  const isFirefox = /Firefox/i.test(ua);
-  const isMobile = /Android|Mobile/i.test(ua);
-  return !(isFirefox && isMobile);
-}
-
+// text/plain entry. There's no reliable browser-side workaround for that —
+// it's a Firefox bug, not something a website can detect or fix — so we
+// just try the standard clipboard write and let Firefox catch up on its own
+// end; everywhere else (Chrome/Brave/Samsung Internet/desktop) this works
+// correctly today.
 async function shareResult() {
   // Reuse the exact canvas already shown in the preview so what gets copied
   // matches what the player sees; fall back to a fresh render if somehow
@@ -890,8 +873,8 @@ async function shareResult() {
       }
     }
 
-    if (clipboardImageWriteSupported()) {
-      try {
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
         // Write both the image and the site link as separate clipboard
         // representations. Some apps (Slack) paste both; Discord drops the
         // text when an image is also present — but the link is also baked
@@ -904,9 +887,10 @@ async function shareResult() {
         await navigator.clipboard.write([item]);
         status.textContent = "Image copied!";
         return;
-      } catch (err) {
-        // Falls through to the download fallback below.
       }
+      throw new Error("Clipboard image API not supported");
+    } catch (err) {
+      // Falls through to the download fallback below.
     }
 
     // Fallback: trigger a download so the user can still share the image
