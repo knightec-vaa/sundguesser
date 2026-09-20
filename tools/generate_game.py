@@ -12,12 +12,18 @@ estimated/typo'd coordinate ever reaching a live game. See
 tools/add_location.py (--verified flag) and tools/fetch_kartaview_locations.py
 (auto-verified via real GPS metadata) for how locations become verified.
 
+When run with no --date, this backfills every missing day between the day
+after the manifest's latest published date and today (inclusive), not just
+"today" — a scheduled GitHub Actions run that gets delayed past midnight UTC
+would otherwise generate for the wrong (later) day and silently skip the
+day it was actually meant to cover, forever. See backfill_dates().
+
 Designed to be run by the GitHub Actions workflow every day (including
 weekends), but can be run locally/manually too:
 
-    python3 tools/generate_game.py                # today
-    python3 tools/generate_game.py --force         # overwrite existing game
-    python3 tools/generate_game.py --date 2026-09-21 --force   # backfill
+    python3 tools/generate_game.py                # today (+ backfill any gap)
+    python3 tools/generate_game.py --force         # overwrite existing game(s)
+    python3 tools/generate_game.py --date 2026-09-21 --force   # one specific day
 """
 import argparse
 import datetime
@@ -84,27 +90,39 @@ def pick_round_order(unused, count, date_str):
     return ordered
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--date", help="ISO date to generate for (default: today)")
-    parser.add_argument("--force", action="store_true", help="overwrite an existing game for that date")
-    args = parser.parse_args()
+def dates_to_backfill(today, manifest_dates):
+    """Every date that should have a published game by `today`, but doesn't
+    yet, according to the manifest. Starts the day after the manifest's
+    latest entry (so a fresh/empty manifest only ever targets `today` itself
+    — there's no history to infer a start date from) and walks forward
+    through `today` inclusive. This is what lets a delayed cron run silently
+    "catch up" instead of permanently skipping the day it was meant for.
+    """
+    if manifest_dates:
+        last = datetime.date.fromisoformat(sorted(manifest_dates)[-1])
+        start = last + datetime.timedelta(days=1)
+    else:
+        start = today
+    if start > today:
+        return []
+    dates = []
+    cursor = start
+    while cursor <= today:
+        dates.append(cursor)
+        cursor += datetime.timedelta(days=1)
+    return dates
 
-    today = datetime.date.fromisoformat(args.date) if args.date else datetime.date.today()
 
+def generate_for_date(today, pool, key, force):
+    """Generates and writes the game file for a single date, mutating `pool`
+    in place (marking chosen locations used) and updating data/manifest.json
+    on success. Returns True if a game was written, False if skipped/failed.
+    """
     date_str = today.isoformat()
     game_file = GAMES_DIR / f"{date_str}.enc.json"
-    if game_file.exists() and not args.force:
+    if game_file.exists() and not force:
         print(f"Game for {date_str} already exists at {game_file}, skipping.")
-        return
-
-    if not POOL_ENCRYPTED.exists():
-        print(f"Missing {POOL_ENCRYPTED}. Run tools/build_pool.py first.")
-        sys.exit(1)
-
-    key = load_key_b64()
-    envelope = json.loads(POOL_ENCRYPTED.read_text())
-    pool = decrypt_json(envelope, key)
+        return False
 
     unused = [loc for loc in pool if not loc.get("used") and loc.get("verified") is True]
 
@@ -121,13 +139,14 @@ def main():
         if len(already_used) < needed:
             print(
                 f"Not enough verified locations at all ({len(unused)} unused + "
-                f"{len(already_used)} reusable), even allowing reuse. Add more with "
-                f"tools/add_location.py --verified or tools/fetch_kartaview_locations.py."
+                f"{len(already_used)} reusable) to generate {date_str}, even allowing "
+                f"reuse. Add more with tools/add_location.py --verified or "
+                f"tools/fetch_kartaview_locations.py."
             )
-            sys.exit(1)
+            return False
         print(
-            f"Only {len(unused)} unused verified location(s) available — reusing "
-            f"{needed} previously-used location(s) to fill out today's game."
+            f"Only {len(unused)} unused verified location(s) available for {date_str} — "
+            f"reusing {needed} previously-used location(s) to fill it out."
         )
         candidates = unused + already_used[:needed]
         reused = True
@@ -140,7 +159,7 @@ def main():
             f"{len(missing_images)} verified location(s) are missing self-hosted image "
             f"data (imgData): {missing_images}. Run tools/backfill_images.py first."
         )
-        sys.exit(1)
+        return False
 
     chosen = pick_round_order(candidates, ROUND_COUNT, date_str)
     chosen_ids = {loc["id"] for loc in chosen}
@@ -170,9 +189,6 @@ def main():
             loc["used"] = True
             loc["usedInGame"] = date_str
 
-    pool_envelope = encrypt_json(pool, key)
-    POOL_ENCRYPTED.write_text(json.dumps(pool_envelope, indent=2) + "\n")
-
     manifest = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {"dates": []}
     if date_str not in manifest["dates"]:
         manifest["dates"].append(date_str)
@@ -181,10 +197,54 @@ def main():
 
     print(f"Generated game for {date_str} using locations: {[l['name'] for l in chosen]}")
     if reused:
-        print("Note: today's game reused some previously-used locations (pool was running low).")
+        print(f"Note: {date_str}'s game reused some previously-used locations (pool was running low).")
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--date", help="ISO date to generate for (default: today, plus backfill of any missing gap)")
+    parser.add_argument("--force", action="store_true", help="overwrite an existing game for that date")
+    args = parser.parse_args()
+
+    if not POOL_ENCRYPTED.exists():
+        print(f"Missing {POOL_ENCRYPTED}. Run tools/build_pool.py first.")
+        sys.exit(1)
+
+    key = load_key_b64()
+    envelope = json.loads(POOL_ENCRYPTED.read_text())
+    pool = decrypt_json(envelope, key)
+
+    if args.date:
+        targets = [datetime.date.fromisoformat(args.date)]
+    else:
+        today = datetime.date.today()
+        manifest = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {"dates": []}
+        targets = dates_to_backfill(today, manifest.get("dates", [])) or [today]
+        if len(targets) > 1:
+            print(f"Backfilling {len(targets)} missing day(s): {[d.isoformat() for d in targets]}")
+
+    any_generated = False
+    for date in targets:
+        generated = generate_for_date(date, pool, key, args.force)
+        any_generated = any_generated or generated
+        if generated:
+            # Persist pool changes after every successful date so a later
+            # failure (e.g. pool exhaustion mid-backfill) doesn't lose the
+            # days that did succeed.
+            pool_envelope = encrypt_json(pool, key)
+            POOL_ENCRYPTED.write_text(json.dumps(pool_envelope, indent=2) + "\n")
+
     remaining_unused = len([loc for loc in pool if not loc.get("used") and loc.get("verified") is True])
     print(f"Remaining unused locations in pool: {remaining_unused}")
+
+    if not any_generated and len(targets) == 1 and not (GAMES_DIR / f"{targets[0].isoformat()}.enc.json").exists():
+        # Only the single-date (non-backfill) path should fail the process —
+        # a backfill run that generates nothing new because everything
+        # already existed is a normal no-op, not an error.
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
+
