@@ -26,7 +26,29 @@ jobs:
     # or when manually triggered.
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if already fetched today
+        if: github.event_name == 'workflow_run'
+        run: |
+          TODAY="$(date -u +%Y-%m-%d)"
+          # Guards against this workflow being triggered more than once in
+          # the same UTC day (e.g. a manual dispatch of "Generate daily
+          # game" followed later by its scheduled backup run both firing
+          # this workflow_run trigger). Fetching is a no-op the second time.
+          # Manual workflow_dispatch of *this* workflow always runs, since
+          # that's an explicit human request.
+          LAST=$(git log -1 --format=%cI --grep="chore: auto-fetch new locations from KartaView" -- data/pool.enc.json)
+          LAST_DATE="${LAST:0:10}"
+          if [ "$LAST_DATE" = "$TODAY" ]; then
+            echo "Already fetched locations today ($TODAY); skipping."
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          fi
+
       - name: Choose random count
+        if: env.SKIP != 'true'
         env:
           EVENT_NAME: ${{ github.event_name }}
           MANUAL_COUNT: ${{ github.event.inputs.count }}
@@ -51,9 +73,6 @@ jobs:
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
               env.write(f"FETCH_COUNT={count}\n")
           PY
-
-      - uses: actions/checkout@v4
-        if: env.SKIP != 'true'
 
       - uses: actions/setup-python@v5
         if: env.SKIP != 'true'
