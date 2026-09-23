@@ -24,6 +24,14 @@ weekends), but can be run locally/manually too:
     python3 tools/generate_game.py                # today (+ backfill any gap)
     python3 tools/generate_game.py --force         # overwrite existing game(s)
     python3 tools/generate_game.py --date 2026-09-21 --force   # one specific day
+
+IMPORTANT — never re-run this with --force on a day that's already been
+played/published just to pick up a new field or scoring tweak (e.g. the
+"modifier" key, see pick_daily_modifier() below). The pool's used/unused
+state drifts every day, so a re-run can silently pick different locations
+for that date, invalidating scores players already earned. Any new
+day-level mechanic must be additive and read back safely as
+missing/None on old game files — see AGENTS.md.
 """
 import argparse
 import datetime
@@ -39,6 +47,31 @@ POOL_ENCRYPTED = REPO_ROOT / "data" / "pool.enc.json"
 GAMES_DIR = REPO_ROOT / "data" / "games"
 MANIFEST = REPO_ROOT / "data" / "manifest.json"
 ROUND_COUNT = 5
+
+# Optional final-round score modifier (see MODIFIER_INFO in script.js).
+# Decided ONCE here, at generation time, seeded by date exactly like
+# hard-round-count below, and baked into the published game file as
+# game["modifier"] — never computed client-side from "whatever today's code
+# happens to do". This is what lets the feature exist going forward without
+# ever touching already-published days: old game files simply have no
+# "modifier" key (or None), and script.js treats that as "never offer one"
+# — see the big comment above MODIFIER_INFO in script.js, and AGENTS.md, for
+# why this matters and must never be violated by regenerating old days.
+MODIFIER_TYPES = ["double", "hard", "quick"]
+MODIFIER_CHANCE = 0.25  # only a 1-in-4 day even has a modifier available at all
+
+
+def pick_daily_modifier(date_str):
+    """None most days; otherwise one of MODIFIER_TYPES, picked deterministically
+    so every player gets the identical offer (if any) for a given day. The
+    client additionally requires the player to have scored 95+ on every
+    round so far before it'll actually show the offer, right before the
+    final round — see shouldOfferFinalModifier() in script.js.
+    """
+    rng = random.Random(f"{date_str}:modifier")
+    if rng.random() >= MODIFIER_CHANCE:
+        return None
+    return rng.choice(MODIFIER_TYPES)
 
 # Stora Torget, the heart of Sundsvall city centre. Used only to rank
 # candidate locations by "how central" they are, so a game's rounds can be
@@ -189,6 +222,7 @@ def generate_for_date(today, pool, key, force):
             }
             for loc in chosen
         ],
+        "modifier": pick_daily_modifier(date_str),
     }
 
     GAMES_DIR.mkdir(parents=True, exist_ok=True)

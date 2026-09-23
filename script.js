@@ -17,16 +17,29 @@ const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.4;
 const CITY_CENTER = [62.3908, 17.3069];
 
-// --- Optional mid-game score modifiers -----------------------------------
-// Offered (never forced) only after the player is already on a hot streak
-// (see shouldOfferModifier()), as a purely client-side, purely-scoring/timer
-// risk-reward detour. Deliberately never touches which locations/photos are
-// shown — the daily round list stays 100% identical for every player no
-// matter what anyone picks here — so "everyone plays the same game" holds.
+// --- Optional final-round score modifier ---------------------------------
+// At most ONE modifier type is available on any given day, decided ONCE at
+// generation time (see pick_daily_modifier() in tools/generate_game.py) and
+// baked into that day's published game file as game.modifier — never
+// computed here from "whatever the client code happens to do today". This
+// is the whole reason the feature can exist going forward without ever
+// touching already-published days: old game files simply have no
+// "modifier" key, dailyModifierType below reads back as null for them, and
+// shouldOfferFinalModifier() always returns false as a result. See
+// AGENTS.md for the full "never change the rules for old days" policy —
+// read it before touching anything in this section.
+//
+// Even when a day does have a modifier available, it's only ever offered
+// once, right before the FINAL round, and only to a player who scored 95+
+// on every round so far (a perfect run) — so the game gets more intense as
+// it goes, rather than being an early freebie. It's a single accept/skip
+// choice, never a picker between multiple options. Purely a client-side
+// scoring/timer effect for that one round — it never touches which
+// locations/photos are shown, so every player still plays the exact same
+// underlying daily game regardless of what they pick.
 // Also fully backward compatible: it only ever adds new optional fields
 // (modifierBonus/roundModifiers) to freshly-saved records; old saved scores
 // (from before this existed) simply have none and are read back as 0/[].
-const MODIFIER_STREAK_TRIGGER = STREAK_MIN_LENGTH; // hot streak length that unlocks an offer
 const MODIFIER_DOUBLE_THRESHOLD = 80; // round score needed to "win" Double or Nothing
 const MODIFIER_DOUBLE_SEED_BONUS = 10; // granted on a win when there was no existing pool to double
 const MODIFIER_HARD_DECAY_METERS = 220; // steeper than the normal 450 -- much less forgiving
@@ -37,18 +50,31 @@ const MODIFIER_QUICK_THRESHOLD = 70;
 const MODIFIER_QUICK_BONUS = 10;
 
 const MODIFIER_INFO = {
-  double: { icon: "🎲", label: "Double or Nothing" },
-  hard: { icon: "💀", label: "Hard Round" },
-  quick: { icon: "⚡", label: "Quick Round" },
+  double: {
+    icon: "🎲", label: "Double or Nothing",
+    pitch: "Final round is Double or Nothing: score 80+ to double your modifier bonus pool, or lose it all.",
+  },
+  hard: {
+    icon: "💀", label: "Hard Round",
+    pitch: "Final round is a Hard Round: much steeper distance scoring, but score 65+ under it for a flat +15 bonus.",
+  },
+  quick: {
+    icon: "⚡", label: "Quick Round",
+    pitch: "Final round is a Quick Round: only 30 seconds on the clock, but score 70+ fast for a flat +10 bonus.",
+  },
 };
 
+let dailyModifierType = null; // this day's available modifier ("double" /
+                               // "hard" / "quick"), or null -- read straight
+                               // from game.modifier, see loadGameForDate().
+let finalModifierOffered = false; // guards against offering it twice in one
+                                   // game (the offer only ever happens once,
+                                   // right before the final round).
 let modifierBonus = 0; // running bonus pool this game, added into finalScore
                         // uncapped (same "not capped at 100" philosophy as
                         // the medal bonus) -- reset in startGame().
 let roundModifiers = []; // per-round modifier outcome, aligned by index with
                           // roundScores: { type, success, delta } or null.
-let modifierOfferedForIndex = -1; // guards against offering twice for the
-                                   // same upcoming round.
 let pendingModifierType = null; // modifier chosen for the round about to
                                  // load; consumed by loadRound().
 let activeModifierType = null; // modifier actually in effect for the round
@@ -459,7 +485,12 @@ async function loadGameForDate(date) {
   const gameRes = await fetch(`data/games/${date}.json`, { cache: "no-store" });
   if (!gameRes.ok) throw new Error(`Failed to load game for ${date}.`);
   const game = await gameRes.json();
-  return { date, locations: game.locations };
+  // game.modifier is decided once, server-side, at generation time (see
+  // pick_daily_modifier() in tools/generate_game.py) — never computed here
+  // from "today's code". Days published before this feature existed simply
+  // have no "modifier" key, which is exactly why they'll never offer one,
+  // no matter how this client code changes later. See AGENTS.md.
+  return { date, locations: game.locations, dailyModifierType: game.modifier || null };
 }
 
 function populateDatePicker(manifest, selectedDate) {
@@ -902,31 +933,36 @@ function nextRound() {
 
     populateDatePicker(manifestCache, activeGameDate);
     updateViewScoreButton();
-  } else if (shouldOfferModifier()) {
+  } else if (shouldOfferFinalModifier()) {
     document.getElementById("resultOverlay").classList.add("hidden");
-    showModifierOverlay();
+    showFinalModifierOverlay();
   } else {
     loadRound();
   }
 }
 
-// A modifier is only ever offered after the player is already on a hot
-// streak (2+ great rounds in a row) and only once per upcoming round, so a
-// continuing streak can offer again next round but never spams the same
-// round twice (e.g. if the overlay were somehow re-triggered).
-function shouldOfferModifier() {
-  return hotStreak >= MODIFIER_STREAK_TRIGGER && modifierOfferedForIndex !== currentRoundIndex;
+// The final-round modifier offer requires ALL of:
+//  - this day actually has one available (dailyModifierType, decided
+//    server-side at generation time — see the big comment above it)
+//  - it hasn't already been offered this game
+//  - the upcoming round is the LAST one (round count intensifies toward the
+//    end, never an early freebie)
+//  - the player scored 95+ on every round so far (a perfect run) — see
+//    HOT_STREAK_SCORE
+function shouldOfferFinalModifier() {
+  if (!dailyModifierType || finalModifierOffered) return false;
+  if (currentRoundIndex !== ROUND_COUNT - 1) return false;
+  if (roundScores.length !== ROUND_COUNT - 1) return false;
+  return roundScores.every((score) => score >= HOT_STREAK_SCORE);
 }
 
-function showModifierOverlay() {
-  modifierOfferedForIndex = currentRoundIndex;
+function showFinalModifierOverlay() {
+  finalModifierOffered = true;
+  const info = MODIFIER_INFO[dailyModifierType];
   const subtitleEl = document.getElementById("modifierSubtitle");
-  if (subtitleEl) {
-    subtitleEl.textContent =
-      `You're ${hotStreak} great rounds deep! Pick an optional twist for round ` +
-      `${currentRoundIndex + 1}, or skip and play it normal. Current bonus pool: ` +
-      `${modifierBonus >= 0 ? "+" : ""}${modifierBonus}.`;
-  }
+  if (subtitleEl) subtitleEl.textContent = info.pitch;
+  const acceptBtn = document.getElementById("modifierAcceptBtn");
+  if (acceptBtn) acceptBtn.textContent = `${info.icon} Accept: ${info.label}`;
   document.getElementById("modifierOverlay").classList.remove("hidden");
 }
 
@@ -934,9 +970,10 @@ function hideModifierOverlay() {
   document.getElementById("modifierOverlay").classList.add("hidden");
 }
 
-// type is one of "double"/"hard"/"quick", or null for the skip button.
-function chooseModifier(type) {
-  pendingModifierType = type;
+// accept=true applies today's single available modifier to the final
+// round; accept=false (skip) plays it exactly as normal.
+function chooseModifier(accept) {
+  pendingModifierType = accept ? dailyModifierType : null;
   hideModifierOverlay();
   loadRound();
 }
@@ -1357,11 +1394,12 @@ async function startGame(requestedDate) {
     populateDatePicker(manifest, date);
     setDateInUrl(date);
 
-    const { locations } = await loadGameForDate(date);
+    const { locations, dailyModifierType: gameDailyModifierType } = await loadGameForDate(date);
     activeGameDate = date;
     // Order matters: generate_game.py deliberately orders rounds
     // easy -> medium -> ... -> hard, so no client-side shuffle here.
     roundLocations = locations;
+    dailyModifierType = gameDailyModifierType;
     currentRoundIndex = 0;
     roundScores = [];
     roundTimesTaken = [];
@@ -1373,7 +1411,7 @@ async function startGame(requestedDate) {
     worstColdStreak = 0;
     modifierBonus = 0;
     roundModifiers = [];
-    modifierOfferedForIndex = -1;
+    finalModifierOffered = false;
     pendingModifierType = null;
     activeModifierType = null;
     currentRoundTimeLimit = ROUND_TIME_SECONDS;
@@ -1487,8 +1525,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const latestDate = pickDefaultDate(manifestCache);
     if (latestDate) startGame(latestDate);
   });
-  document.getElementById("modifierDoubleBtn").addEventListener("click", () => chooseModifier("double"));
-  document.getElementById("modifierHardBtn").addEventListener("click", () => chooseModifier("hard"));
-  document.getElementById("modifierQuickBtn").addEventListener("click", () => chooseModifier("quick"));
-  document.getElementById("modifierSkipBtn").addEventListener("click", () => chooseModifier(null));
+  document.getElementById("modifierAcceptBtn").addEventListener("click", () => chooseModifier(true));
+  document.getElementById("modifierSkipBtn").addEventListener("click", () => chooseModifier(false));
 });
