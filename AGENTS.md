@@ -64,8 +64,137 @@ the client evolves later. Do not "fix" old game files to add this field.
 - Medal bonuses and modifier bonuses are deliberately **not** capped at 100
   or floored at 0 — stacking them past 100 is what unlocks/escalates the
   SUNDMASTER title and celebration. This is intentional, not a bug.
+- **SUNDMASTER is tiered (0-3), not a single on/off state.**
+  `sundmasterTier(score)` in `script.js` maps score ranges to a tier
+  (`>100` → 1 "🏆 SUNDMASTER!", `>130` → 2 "👑 SUPER SUNDMASTER!!", `>170` →
+  3 "🌈 ULTRA SUNDMASTER!!!"), driving both `SUNDMASTER_TITLES[tier]` and
+  the `.sundmaster` / `.sundmaster-tier2` / `.sundmaster-tier3` CSS classes
+  on `#finalBox` (each gated to `tier >= 1`/`2`/`3`, so classes stack).
+  `currentIsSundmaster` (bool) and `currentSundmasterTier` (0-3) are both
+  set together, following the same explicit-state pattern as
+  `currentShareScore` — never inferred at render time, always assigned by
+  whichever flow (`nextRound()` live finish, or `showSavedScoreOverlay()`
+  replay) currently owns the display.
 - The visible score on the results share card is drawn on an HTML5 canvas
   (`drawShareCanvas()`), not plain DOM text — `#finalScore` /
   `#roundBreakdown` / `#scoreBreakdownNote` are screen-reader-only mirrors.
   Any "make a number's meaning clearer" change needs to be made in *both*
   places.
+- Once the pool of unused locations runs low, `generate_game.py` starts
+  reusing previously-used locations rather than failing outright — but
+  picks them via a date-seeded RNG sample from a widened "oldest-used"
+  window (not a strict oldest-N cut), so repeat cycles don't all play out
+  identically. Reusing locations does not affect an already-published
+  day's frozen data — it only governs what a *newly generated* day is
+  allowed to draw from.
+
+## Daily automation pipeline (GitHub Actions)
+
+Three workflows keep the game running with no manual intervention, chained
+by `workflow_run` (not shared schedules) specifically to avoid races and to
+make sure the most important job — publishing the day's game — can never be
+blocked or delayed by the other two:
+
+1. **`daily-game.yml`** ("Generate daily game") — the only workflow with
+   its own cron: a primary run at `5 0 * * *` (00:05 UTC, right after the
+   UTC day rolls over — `generate_game.py` uses UTC `date.today()`) plus a
+   backup run at `23 3 * * *` in case the primary is delayed or skipped
+   (GitHub's schedule triggers are best-effort and can lag by hours,
+   confirmed in practice). Safe to run twice a day: `generate_for_date()`
+   no-ops (exit 0) if the day's game file already exists without `--force`.
+   Also self-heals gaps: with no `--date`, it backfills every missing day
+   between the manifest's latest published date and today, not just
+   literally "today" — so a long scheduling delay can never silently and
+   permanently skip a day. **Never** pass `--force` on an already-published
+   date (see the CRITICAL section above).
+2. **`fetch-locations.yml`** ("Fetch new locations") — triggered by
+   `workflow_run` on "Generate daily game" completing (any conclusion),
+   instead of its own schedule, so it can never race with game generation
+   over writing `data/`. Has its own same-day guard (checks `git log` for
+   today's UTC-dated "chore: auto-fetch..." commit and skips if found) so
+   it can't double-fetch if "Generate daily game" happens to run twice in
+   one day (e.g. primary + backup both firing). Manual `workflow_dispatch`
+   of this workflow always runs regardless of the guard.
+3. **`deploy.yml`** ("Deploy to GitHub Pages") — also triggered
+   independently by `workflow_run` on "Generate daily game" succeeding
+   (`GITHUB_TOKEN`-authored pushes from `daily-game.yml` don't trigger
+   `push` events, hence `workflow_run` instead), in parallel with
+   `fetch-locations.yml`, not chained after it.
+
+All three `workflow_run` listeners fire off the *same* upstream event, so
+game generation itself never waits on either of the other two — a stuck or
+buggy fetch/deploy run can't delay tomorrow's game.
+
+## How to actually verify changes work (don't just read the code)
+
+Both the client and the automation pipeline have caused real, subtle bugs
+that only surfaced by *running* things, not by reasoning about the code —
+see the replay-scoring bug and the stray-future-game-file bug earlier in
+this project's history. Static review (syntax checks, reading diffs) is not
+enough on its own; always follow up with one of these depending on what
+changed:
+
+**Client-side changes (`script.js`/`effects.js`/`style.css`/`index.html`):**
+- Run a local dev server (`LOCATIONS_KEY=$(cat secrets/key.txt) python3
+  tools/dev_server.py <port>`) and drive it with a headless Chromium
+  instance over raw CDP (no Playwright available in this environment) —
+  connect via WebSocket, `Runtime.evaluate` to call game functions directly
+  (e.g. force a specific score, call `nextRound()`/`showSavedScoreOverlay()`
+  /`drawShareCanvas()`), and assert on both the resulting DOM state (globals
+  like `currentIsSundmaster`, text content) and that canvas-drawing calls
+  complete without throwing.
+- Specifically test the *replay* path, not just first-playthrough: play a
+  day once, then again with different inputs, and confirm the share card
+  reflects the fresh attempt while `record.score` (the frozen official
+  value) and the "Nth TRY" stamp still show the original. A bug here is
+  easy to introduce (reading the wrong variable) and easy to miss if you
+  only ever test a fresh first playthrough.
+- Confirm old data still reads back safely: simulate a `localStorage`
+  record and a game file missing whatever new field you just added, and
+  check nothing throws or silently misbehaves (`|| 0`, `|| null`, etc. must
+  actually be hit, not just present in the code).
+- Clean up: kill the dev server / Chromium processes and delete any temp
+  test scripts when done. `kill <PID>` only — no `pkill`/`killall` in this
+  environment.
+
+**`tools/generate_game.py` / pool / manifest changes:**
+- Never test destructively against the real `data/` in this repo — pool
+  used/unused state and the manifest are live production data. Copy the
+  repo (or just the relevant `tools/`, `data/`, `secrets/` files) to a
+  throwaway directory (e.g. `/tmp/sg_test`) and run scenarios there:
+  normal no-op when today's game already exists, explicit `--date --force`,
+  a simulated multi-day scheduling gap (backfill), and pool exhaustion
+  (reuse path). Delete the temp directory afterward.
+- After any change to what gets baked into a game file, decrypt a freshly
+  generated test file and inspect the actual JSON — don't just trust that
+  the code "should" produce the right shape.
+
+**GitHub Actions workflow changes (`.github/workflows/*.yml`):**
+- YAML-syntax-check every changed workflow file
+  (`python3 -c "import yaml; yaml.safe_load(open(f))"` per file) before
+  considering it done — a bad indent silently breaks the whole workflow on
+  the next trigger with no local warning.
+- Structural reasoning about `on:`/`if:`/`workflow_run` conditions is not
+  sufficient proof it works — GitHub Actions triggers have real quirks
+  (e.g. `GITHUB_TOKEN`-authored pushes don't fire `push` events; scheduled
+  triggers can silently lag hours behind their cron time on low-traffic
+  repos). After such a change is pushed, use the GitHub API/MCP tools
+  (`actions_list` → `list_workflow_runs`, `list_workflow_jobs`,
+  `get_job_logs`) to confirm, on a real run: which trigger fired it, which
+  steps actually ran vs. got skipped, and that the expected downstream
+  workflow(s) fired afterward with the expected outcome (e.g. a same-day
+  guard actually skipping a duplicate run, not just existing in the YAML).
+  Don't declare a workflow change verified until you've seen it behave
+  correctly against a real GitHub Actions run, not just a sandboxed
+  simulation.
+
+## Commit message convention
+
+Keep every commit message to a **single line**: one lighthearted/funny word
+or short phrase, no explanatory body, no bullet list of what changed (e.g.
+`mango :D`, `kiwi :D`, `:)` — see `git log` for the established style).
+**Do not** write a multi-paragraph description of the change into the
+commit message, even if the change itself is substantial or nuanced — that
+kind of detail belongs in this file (AGENTS.md) or in conversation with the
+user, not in the commit body. If a commit needs the "why" written down
+somewhere permanent, that's a sign it should be captured here instead.
