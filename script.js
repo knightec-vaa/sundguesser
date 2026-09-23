@@ -849,11 +849,15 @@ function baseScoreValue() {
 // hardFlags/scores (both indexed the same way as times/zoomUsed) let a
 // separate medal reward being fast AND accurate specifically on the hard
 // round(s) of the day, which is a tougher bar than the overall averages.
+// "Lightning Fast" additionally requires every single round to have scored
+// 95+ — being quick isn't enough on its own, it has to be quick AND
+// consistently near-perfect, unlike the more lenient "Quick Guesser" medal.
 function computeMedals(score, times, zoomUsed, hardFlags, scores) {
   if (!times || !times.length || score < 60) return [];
   const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
   const medals = [];
-  if (avgTime <= 12) medals.push({ icon: "⚡", label: "Lightning Fast" });
+  const allRoundsNearPerfect = scores && scores.length && scores.every((s) => s >= 95);
+  if (avgTime <= 12 && allRoundsNearPerfect) medals.push({ icon: "⚡", label: "Lightning Fast" });
   else if (avgTime <= 25) medals.push({ icon: "🏃", label: "Quick Guesser" });
   if (zoomUsed && zoomUsed.length && zoomUsed.every((z) => !z)) {
     medals.push({ icon: "🧭", label: "True Local" });
