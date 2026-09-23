@@ -1199,16 +1199,20 @@ function drawShareCanvas() {
     ctx.fillText("🥀", 395, 150);
   }
 
-  // Plain-language "why isn't this just my round average" breakdown, so a
+  // Plain-number "why isn't this just my round average" breakdown, so a
   // score like 110/100 (or -15/100) never reads as a bug — only drawn when
-  // there's actually something to explain.
+  // there's actually something to explain. Deliberately just the raw
+  // numbers being added (e.g. "74 + 10 = 84"), not labelled sub-totals like
+  // "74 base + medals +10" — the medal/modifier pills elsewhere on the
+  // card already explain *what* each bonus is; this line only needs to
+  // show the arithmetic.
   if (medalBonusTotal > 0 || currentModifierBonus !== 0) {
-    const parts = [`${baseScore} base`];
-    if (medalBonusTotal > 0) parts.push(`medals +${medalBonusTotal}`);
-    if (currentModifierBonus !== 0) parts.push(`modifiers ${currentModifierBonus > 0 ? "+" : ""}${currentModifierBonus}`);
+    const parts = [`${baseScore}`];
+    if (medalBonusTotal > 0) parts.push(`+ ${medalBonusTotal}`);
+    if (currentModifierBonus !== 0) parts.push(`${currentModifierBonus > 0 ? "+" : "-"} ${Math.abs(currentModifierBonus)}`);
     ctx.font = "13px sans-serif";
     ctx.fillStyle = "#e8f0ff";
-    ctx.fillText(`${parts.join(" + ")} = ${finalScore}`, 28, 190);
+    ctx.fillText(`${parts.join(" ")} = ${finalScore}`, 28, 190);
   }
 
   ctx.font = "16px sans-serif";
