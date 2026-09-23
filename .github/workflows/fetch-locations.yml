@@ -59,7 +59,7 @@ jobs:
 
           if os.environ["EVENT_NAME"] == "workflow_run":
               rng = random.SystemRandom()
-              count = rng.randint(0, 10)
+              count = rng.randint(0, 20)
           else:
               count = int(os.environ.get("MANUAL_COUNT") or "10")
 

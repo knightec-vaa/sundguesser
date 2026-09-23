@@ -253,6 +253,7 @@ def main():
     print(f"Querying KartaView across {len(GRID_POINTS)} grid points in Sundsvall...")
     candidates = []
     seen_ids = set()
+    delay_rng = random.SystemRandom()
     for lat, lng in GRID_POINTS:
         photos = query_kartaview(lat, lng)
         for p in photos:
@@ -265,7 +266,7 @@ def main():
             except (KeyError, ValueError, TypeError):
                 continue
             candidates.append({"id": pid, "lat": plat, "lng": plng, "photo": p})
-        time.sleep(0.5)
+        time.sleep(delay_rng.uniform(0.5, 1.5))
 
     print(f"Found {len(candidates)} unique candidate photos.")
 
@@ -276,7 +277,6 @@ def main():
     known_coords = list(existing_coords)
     checked = 0
     image_downloads = 0
-    delay_rng = random.SystemRandom()
     for c in candidates:
         if len(new_entries) >= args.count:
             break
@@ -297,7 +297,7 @@ def main():
 
         checked += 1
         name, has_road = reverse_geocode(lat, lng)
-        time.sleep(1)  # Nominatim usage policy: max 1 req/sec
+        time.sleep(delay_rng.uniform(1.0, 2.0))  # Nominatim usage policy: max 1 req/sec
         if args.require_road_name and not has_road:
             print(f"  - skip (no road name): {name or 'unknown'} ({lat:.5f},{lng:.5f})")
             continue
