@@ -130,9 +130,14 @@ def generate_for_date(today, pool, key, force):
     if len(unused) < ROUND_COUNT:
         # Not enough fresh locations (fetch-locations.yml hasn't run yet this
         # week, or it failed) — fall back to reusing already-used verified
-        # locations rather than failing outright. Prefer the ones that were
-        # used longest ago (oldest usedInGame date) so repeats are as spread
-        # out as possible, and top up with the unused ones we do have.
+        # locations rather than failing outright. Bias towards the ones used
+        # longest ago (oldest usedInGame date) so repeats stay spread out,
+        # but — like pick_round_order()'s hard-round-count — pick which ones
+        # with a date-seeded RNG rather than always taking the strict oldest
+        # N. Otherwise reuse becomes a perfectly fixed rotation (same pool
+        # exhausted -> same locations picked in the same order every single
+        # cycle), which feels suspiciously non-random to repeat players even
+        # though it's technically "spread out".
         already_used = [loc for loc in pool if loc.get("used") and loc.get("verified") is True]
         already_used.sort(key=lambda loc: loc.get("usedInGame") or "")
         needed = ROUND_COUNT - len(unused)
@@ -148,7 +153,13 @@ def generate_for_date(today, pool, key, force):
             f"Only {len(unused)} unused verified location(s) available for {date_str} — "
             f"reusing {needed} previously-used location(s) to fill it out."
         )
-        candidates = unused + already_used[:needed]
+        rng = random.Random(f"{date_str}:reuse-pick")
+        # Widen the candidate window beyond the bare minimum (oldest-used
+        # half, or just `needed` if the pool is tiny) so there's actually
+        # something to shuffle, then randomly sample from it.
+        window = max(needed, len(already_used) // 2)
+        reused_locations = rng.sample(already_used[:window], needed)
+        candidates = unused + reused_locations
         reused = True
     else:
         candidates = unused
