@@ -52,6 +52,7 @@
 <main>
   <div id="photoPane">
     <span id="hardRoundBadge" class="hard-round-badge">🔥 Hard Round</span>
+    <span id="modifierBadge" class="modifier-badge hidden"></span>
     <span id="roundAreaHint" class="round-area-hint"></span>
     <div id="zoomControls" class="zoom-controls">
       <button id="zoomInBtn" title="Zoom in">➕</button>
@@ -84,9 +85,36 @@
     <h2 id="resultTitle"></h2>
     <p id="resultDistance"></p>
     <p id="resultPoints"></p>
+    <p id="resultModifierNote" class="modifier-note hidden"></p>
     <p id="streakBadge" class="streak-badge hidden"></p>
     <p class="reviewHint">🗺️ Look around the map to see where you were!</p>
     <button id="nextBtn">Next Round</button>
+  </div>
+</div>
+
+<!-- Offered mid-game only after a hot streak (2+ great rounds in a row),
+     never on every round — an optional risk/reward detour, not a core
+     mechanic everyone has to engage with. Purely a scoring/timer choice
+     applied client-side to *this player's* remaining rounds; it never
+     changes which locations/photos anyone sees, so every player still
+     plays the exact same underlying daily game. See MODIFIER_INFO,
+     shouldOfferModifier() and resolveModifier() in script.js. -->
+<div id="modifierOverlay" class="hidden">
+  <div id="modifierBox">
+    <h2 id="modifierTitle">🔥 You're on fire!</h2>
+    <p id="modifierSubtitle"></p>
+    <div id="modifierChoices">
+      <button id="modifierDoubleBtn" class="modifier-choice-btn" data-modifier="double">
+        🎲 Double or Nothing
+      </button>
+      <button id="modifierHardBtn" class="modifier-choice-btn" data-modifier="hard">
+        💀 Hard Round
+      </button>
+      <button id="modifierQuickBtn" class="modifier-choice-btn" data-modifier="quick">
+        ⚡ Quick Round (30s)
+      </button>
+    </div>
+    <button id="modifierSkipBtn" class="modifier-skip-btn">No thanks, play it normal</button>
   </div>
 </div>
 
@@ -97,6 +125,7 @@
     <div id="shareCardPreview"></div>
     <p id="finalScore" class="sr-only"></p>
     <ul id="roundBreakdown" class="sr-only"></ul>
+    <p id="scoreBreakdownNote" class="sr-only"></p>
     <p id="firstScoreNote" class="shareStatus"></p>
     <div class="shareBtnRow">
       <button id="shareBtn">📋 Share Result</button>

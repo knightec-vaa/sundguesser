@@ -17,6 +17,48 @@ const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.4;
 const CITY_CENTER = [62.3908, 17.3069];
 
+// --- Optional mid-game score modifiers -----------------------------------
+// Offered (never forced) only after the player is already on a hot streak
+// (see shouldOfferModifier()), as a purely client-side, purely-scoring/timer
+// risk-reward detour. Deliberately never touches which locations/photos are
+// shown — the daily round list stays 100% identical for every player no
+// matter what anyone picks here — so "everyone plays the same game" holds.
+// Also fully backward compatible: it only ever adds new optional fields
+// (modifierBonus/roundModifiers) to freshly-saved records; old saved scores
+// (from before this existed) simply have none and are read back as 0/[].
+const MODIFIER_STREAK_TRIGGER = STREAK_MIN_LENGTH; // hot streak length that unlocks an offer
+const MODIFIER_DOUBLE_THRESHOLD = 80; // round score needed to "win" Double or Nothing
+const MODIFIER_DOUBLE_SEED_BONUS = 10; // granted on a win when there was no existing pool to double
+const MODIFIER_HARD_DECAY_METERS = 220; // steeper than the normal 450 -- much less forgiving
+const MODIFIER_HARD_THRESHOLD = 65; // score (under that steeper decay) needed to bank the bonus
+const MODIFIER_HARD_BONUS = 15;
+const MODIFIER_QUICK_TIME_SECONDS = 30;
+const MODIFIER_QUICK_THRESHOLD = 70;
+const MODIFIER_QUICK_BONUS = 10;
+
+const MODIFIER_INFO = {
+  double: { icon: "🎲", label: "Double or Nothing" },
+  hard: { icon: "💀", label: "Hard Round" },
+  quick: { icon: "⚡", label: "Quick Round" },
+};
+
+let modifierBonus = 0; // running bonus pool this game, added into finalScore
+                        // uncapped (same "not capped at 100" philosophy as
+                        // the medal bonus) -- reset in startGame().
+let roundModifiers = []; // per-round modifier outcome, aligned by index with
+                          // roundScores: { type, success, delta } or null.
+let modifierOfferedForIndex = -1; // guards against offering twice for the
+                                   // same upcoming round.
+let pendingModifierType = null; // modifier chosen for the round about to
+                                 // load; consumed by loadRound().
+let activeModifierType = null; // modifier actually in effect for the round
+                                // currently being played; consumed/reset by
+                                // makeGuess().
+let currentRoundTimeLimit = ROUND_TIME_SECONDS; // actual time limit for the
+                                                 // round in progress (120s
+                                                 // normally, 30s for an
+                                                 // active Quick Round).
+
 let map, guessMarker, roundLocations, currentRoundIndex, roundScores, resultLayers;
 let roundLocked = false; // true while the result panel is showing, so map
                           // clicks don't move the guess marker during review
@@ -31,6 +73,10 @@ let currentBestHotStreak = 0; // whichever run's showcase streak is on screen
                                // the share card, set explicitly like
                                // currentShareScore, never recomputed.
 let currentWorstColdStreak = 0; // same idea, for the roast badge.
+let currentModifierBonus = 0; // total bonus banked via optional modifiers,
+                               // same explicit-state pattern as the streak
+                               // fields above (set by whichever flow — live
+                               // or replay — currently owns the display).
 let currentAttemptNumber = 1;
 let roundTimerInterval = null;
 let roundTimerRemaining = ROUND_TIME_SECONDS;
@@ -132,10 +178,12 @@ function frameMapForRound(location) {
 
 // Distance -> 0-100 percentage score. Close guesses round up to 100; far guesses decay to 0.
 // The exponent sharpens the falloff so being "somewhat close" isn't as forgiving —
-// a couple of km off should genuinely hurt.
-function distanceToScore(distanceMeters) {
+// a couple of km off should genuinely hurt. decayMeters is overridable so an
+// active "Hard Round" modifier (see MODIFIER_HARD_DECAY_METERS) can apply a
+// steeper falloff for just that one round without touching the base game.
+function distanceToScore(distanceMeters, decayMeters = DISTANCE_DECAY_METERS) {
   if (distanceMeters <= PERFECT_DISTANCE_METERS) return 100;
-  const raw = 100 * Math.exp(-Math.pow(distanceMeters / DISTANCE_DECAY_METERS, DISTANCE_SCORE_EXPONENT));
+  const raw = 100 * Math.exp(-Math.pow(distanceMeters / decayMeters, DISTANCE_SCORE_EXPONENT));
   return Math.max(0, Math.min(100, Math.round(raw)));
 }
 
@@ -184,7 +232,7 @@ function computeDailyStreak(date, savedScores) {
 // internal medal bookkeeping (never surfaced per-round in the UI).
 // bestHotStreak/worstColdStreak capture the most impressive/embarrassing
 // in-run streak reached, for the showcase/roast badges on the share card.
-function saveFirstScoreIfMissing(date, score, scores, medals, hardFlags, bestHotStreak, worstColdStreak) {
+function saveFirstScoreIfMissing(date, score, scores, medals, hardFlags, bestHotStreak, worstColdStreak, modifierBonusTotal, modifiersUsed) {
   const saved = loadSavedScores();
   if (saved[date]) return { record: saved[date], justSaved: false };
   const seed = Math.floor(Math.random() * 1e9);
@@ -196,7 +244,9 @@ function saveFirstScoreIfMissing(date, score, scores, medals, hardFlags, bestHot
     medals: medals || [],
     hardFlags: hardFlags || [],
     bestHotStreak: bestHotStreak || 0,
-    worstColdStreak: worstColdStreak || 0
+    worstColdStreak: worstColdStreak || 0,
+    modifierBonus: modifierBonusTotal || 0,
+    roundModifiers: modifiersUsed || []
   };
   saved[date] = record;
   localStorage.setItem(SCORES_STORAGE_KEY, JSON.stringify(saved));
@@ -480,6 +530,17 @@ function loadRound() {
   areaHint.textContent = `📍 Area: ${roundAreaLabel(loc)}`;
   areaHint.classList.toggle("visible", !isHardRound && Boolean(roundAreaLabel(loc)));
 
+  // Consume whatever modifier the player just picked (if any) from the
+  // mid-round offer overlay -- it applies to this one round only.
+  activeModifierType = pendingModifierType;
+  pendingModifierType = null;
+  const modifierBadge = document.getElementById("modifierBadge");
+  if (modifierBadge) {
+    const info = MODIFIER_INFO[activeModifierType];
+    modifierBadge.textContent = info ? `${info.icon} ${info.label}` : "";
+    modifierBadge.classList.toggle("hidden", !info);
+  }
+
   updateHud();
   startRoundTimer();
 }
@@ -492,7 +553,8 @@ function formatTimer(seconds) {
 
 function startRoundTimer() {
   stopRoundTimer();
-  roundTimerRemaining = ROUND_TIME_SECONDS;
+  currentRoundTimeLimit = activeModifierType === "quick" ? MODIFIER_QUICK_TIME_SECONDS : ROUND_TIME_SECONDS;
+  roundTimerRemaining = currentRoundTimeLimit;
   updateTimerDisplay();
   roundTimerInterval = setInterval(() => {
     roundTimerRemaining--;
@@ -535,7 +597,8 @@ function makeGuess(opts = {}) {
     guessMarker.dragging.disable(); // keep it pinned so it doesn't drift away
     const guessLatLng = guessMarker.getLatLng();          // from the result line while the player is
     const distance = haversineDistance(guessLatLng.lat, guessLatLng.lng, loc.lat, loc.lng); // reviewing the map
-    points = distanceToScore(distance);
+    const decayMeters = activeModifierType === "hard" ? MODIFIER_HARD_DECAY_METERS : DISTANCE_DECAY_METERS;
+    points = distanceToScore(distance, decayMeters);
     const line = L.polyline([guessLatLng, [loc.lat, loc.lng]], { color: "red", dashArray: "5,5" }).addTo(map);
     resultLayers.push(line);
     map.fitBounds(line.getBounds(), { padding: [60, 60] });
@@ -552,8 +615,12 @@ function makeGuess(opts = {}) {
   // Speed/efficiency tracking for the end-of-game medal badges: how long
   // this round took (time limit minus whatever was left) and whether the
   // photo was ever zoomed/panned into during this round.
-  roundTimesTaken.push(ROUND_TIME_SECONDS - Math.max(0, roundTimerRemaining));
+  roundTimesTaken.push(currentRoundTimeLimit - Math.max(0, roundTimerRemaining));
   roundZoomUsed.push(zoomUsedThisRound);
+
+  const modifierResult = resolveModifier(points, guessMarker !== null);
+  roundModifiers[currentRoundIndex] = modifierResult;
+  activeModifierType = null;
 
   document.getElementById("resultTitle").textContent = loc.name;
   document.getElementById("resultDistance").textContent =
@@ -563,6 +630,7 @@ function makeGuess(opts = {}) {
   animateScoreCountUp(pointsEl, points, { suffix: ` / 100 ${scoreEmoji(points)}` });
   playScoreEffect(points);
   applyStreakVisuals();
+  applyModifierResultVisuals(modifierResult);
 
   const isLastRound = currentRoundIndex === ROUND_COUNT - 1;
   document.getElementById("nextBtn").textContent = isLastRound ? "See Final Score" : "Next Round";
@@ -570,6 +638,64 @@ function makeGuess(opts = {}) {
   document.getElementById("guessBtn").disabled = true;
   document.getElementById("resultOverlay").classList.remove("hidden");
   updateHud();
+}
+
+// Resolves whichever optional modifier was active for the round that just
+// finished (if any) against its raw round score, updating the shared
+// modifierBonus pool. Returns null when no modifier was active, or a
+// {type, success, delta} record used both for the per-round result note and
+// for the permanently-saved roundModifiers breakdown. A timeout or an
+// unplaced guess always counts as a loss for whatever modifier was active —
+// consistent with how a plain round with no guess just scores 0.
+function resolveModifier(points, hadGuess) {
+  if (!activeModifierType) return null;
+  const won = hadGuess && points >= modifierWinThreshold(activeModifierType);
+
+  if (activeModifierType === "double") {
+    const before = modifierBonus;
+    modifierBonus = won ? (before > 0 ? before * 2 : MODIFIER_DOUBLE_SEED_BONUS) : 0;
+    return { type: "double", success: won, delta: modifierBonus - before };
+  }
+
+  const delta = won ? modifierFixedBonus(activeModifierType) : 0;
+  modifierBonus += delta;
+  return { type: activeModifierType, success: won, delta };
+}
+
+function modifierWinThreshold(type) {
+  if (type === "double") return MODIFIER_DOUBLE_THRESHOLD;
+  if (type === "hard") return MODIFIER_HARD_THRESHOLD;
+  return MODIFIER_QUICK_THRESHOLD;
+}
+
+function modifierFixedBonus(type) {
+  if (type === "hard") return MODIFIER_HARD_BONUS;
+  if (type === "quick") return MODIFIER_QUICK_BONUS;
+  return 0;
+}
+
+// Shows a plain-language success/fail callout for the round's modifier (if
+// any) right under its points, so the resulting bonus (or loss) is never a
+// mystery -- same "make the +numbers legible" goal as the medal/share-card
+// breakdown.
+function applyModifierResultVisuals(modifierResult) {
+  const noteEl = document.getElementById("resultModifierNote");
+  if (!noteEl) return;
+  if (!modifierResult) {
+    noteEl.textContent = "";
+    noteEl.classList.add("hidden");
+    noteEl.classList.remove("modifier-success", "modifier-fail");
+    return;
+  }
+  const info = MODIFIER_INFO[modifierResult.type];
+  const sign = modifierResult.delta > 0 ? "+" : "";
+  const deltaText = `${sign}${modifierResult.delta}`;
+  noteEl.textContent = modifierResult.success
+    ? `${info.icon} ${info.label}: SUCCESS! (${deltaText} bonus)`
+    : `${info.icon} ${info.label}: FAILED (${deltaText} bonus)`;
+  noteEl.classList.remove("hidden");
+  noteEl.classList.toggle("modifier-success", modifierResult.success);
+  noteEl.classList.toggle("modifier-fail", !modifierResult.success);
 }
 
 // Tracks consecutive hot (>=95) or cold (<=20) rounds *within the current
@@ -652,15 +778,34 @@ let currentShareScore = 0;
 // currently owns the display, never inferred at render time.
 let currentIsSundmaster = false;
 
-// Swaps the "Game Over!" heading for a celebratory SUNDMASTER title (and
-// toggles the matching background flourish) when a perfect-plus score was
-// reached. Cheap DOM toggle, safe to call from both the live-finish and
-// historical-replay paths.
-function applyFinalTitle(isSundmaster) {
+// How far past 100 the score got, on a 0-3 scale (0 = not Sundmaster at all).
+// Purely a bigger-number-means-crazier-visuals escalation on top of the
+// existing SUNDMASTER achievement — same explicit-state pattern as
+// currentIsSundmaster, set alongside it, never inferred at render time.
+let currentSundmasterTier = 0;
+
+function sundmasterTier(score) {
+  if (score > 170) return 3;
+  if (score > 130) return 2;
+  if (score > 100) return 1;
+  return 0;
+}
+
+const SUNDMASTER_TITLES = ["Game Over!", "🏆 SUNDMASTER!", "👑 SUPER SUNDMASTER!!", "🌈 ULTRA SUNDMASTER!!!"];
+
+// Swaps the "Game Over!" heading for an increasingly over-the-top SUNDMASTER
+// title (and toggles matching background flourishes) the further a score
+// climbed past the normal 100 ceiling. Cheap DOM toggle, safe to call from
+// both the live-finish and historical-replay paths.
+function applyFinalTitle(tier) {
   const titleEl = document.getElementById("finalTitle");
   const boxEl = document.getElementById("finalBox");
-  if (titleEl) titleEl.textContent = isSundmaster ? "🏆 SUNDMASTER!" : "Game Over!";
-  if (boxEl) boxEl.classList.toggle("sundmaster", isSundmaster);
+  if (titleEl) titleEl.textContent = SUNDMASTER_TITLES[tier] || SUNDMASTER_TITLES[0];
+  if (boxEl) {
+    boxEl.classList.toggle("sundmaster", tier >= 1);
+    boxEl.classList.toggle("sundmaster-tier2", tier >= 2);
+    boxEl.classList.toggle("sundmaster-tier3", tier >= 3);
+  }
 }
 
 function baseScoreValue() {
@@ -701,13 +846,14 @@ function nextRound() {
 
     const baseScore = baseScoreValue();
     const medals = computeMedals(baseScore, roundTimesTaken, roundZoomUsed, roundHardFlags, roundScores);
-    // Medal bonus is only ever applied to a fresh live playthrough happening
-    // right now — see the MEDAL_BONUS_PER_MEDAL comment above. Deliberately
-    // NOT capped at 100: stacking every medal on a flawless run can push
-    // past 100, which is the whole point — that's what unlocks the
+    // Medal bonus + modifier bonus are only ever applied to a fresh live
+    // playthrough happening right now — see the MEDAL_BONUS_PER_MEDAL
+    // comment above. Deliberately NOT capped at 100 (in either direction):
+    // stacking medals/modifiers on a flawless run can push well past 100,
+    // which is the whole point — that's what unlocks (and escalates) the
     // SUNDMASTER title/celebration below. A plain 100 stays a plain 100.
-    const finalScore = baseScore + medals.length * MEDAL_BONUS_PER_MEDAL;
-    const isSundmaster = finalScore > 100;
+    const finalScore = baseScore + medals.length * MEDAL_BONUS_PER_MEDAL + modifierBonus;
+    const tier = sundmasterTier(finalScore);
 
     const finalScoreEl = document.getElementById("finalScore");
     animateScoreCountUp(finalScoreEl, finalScore, {
@@ -715,12 +861,17 @@ function nextRound() {
       suffix: ` / 100 ${scoreEmoji(finalScore)}${finalScore === 0 ? " 🥀" : ""}`
     });
     playScoreEffect(finalScore);
+    // Extra celebratory burst that keeps escalating with the tier, on top
+    // of the standard great-score confetti playScoreEffect already fired.
+    if (tier >= 2) launchConfetti(50 + tier * 40);
 
     renderRoundBreakdown();
+    renderScoreBreakdownNote(finalScore, baseScore, medals.length, modifierBonus);
 
     currentAttemptNumber = bumpAttempt(activeGameDate);
     const { record, justSaved } = saveFirstScoreIfMissing(
-      activeGameDate, finalScore, roundScores, medals, roundHardFlags, bestHotStreak, worstColdStreak
+      activeGameDate, finalScore, roundScores, medals, roundHardFlags, bestHotStreak, worstColdStreak,
+      modifierBonus, roundModifiers
     );
     // The share card always reflects the attempt actually being displayed
     // right now — the fresh finalScore/medals/streaks just computed above —
@@ -733,11 +884,13 @@ function nextRound() {
     currentShareSeed = record.seed;
     currentMedals = medals;
     currentShareScore = finalScore;
+    currentModifierBonus = modifierBonus;
     currentBestHotStreak = bestHotStreak || 0;
     currentWorstColdStreak = worstColdStreak || 0;
     currentDailyStreak = computeDailyStreak(activeGameDate);
-    currentIsSundmaster = currentShareScore > 100;
-    applyFinalTitle(currentIsSundmaster);
+    currentSundmasterTier = tier;
+    currentIsSundmaster = tier >= 1;
+    applyFinalTitle(tier);
     updateShareCardPreview();
     updateShareBtnTier(currentShareScore);
     document.getElementById("finalOverlay").classList.remove("hidden");
@@ -749,9 +902,43 @@ function nextRound() {
 
     populateDatePicker(manifestCache, activeGameDate);
     updateViewScoreButton();
+  } else if (shouldOfferModifier()) {
+    document.getElementById("resultOverlay").classList.add("hidden");
+    showModifierOverlay();
   } else {
     loadRound();
   }
+}
+
+// A modifier is only ever offered after the player is already on a hot
+// streak (2+ great rounds in a row) and only once per upcoming round, so a
+// continuing streak can offer again next round but never spams the same
+// round twice (e.g. if the overlay were somehow re-triggered).
+function shouldOfferModifier() {
+  return hotStreak >= MODIFIER_STREAK_TRIGGER && modifierOfferedForIndex !== currentRoundIndex;
+}
+
+function showModifierOverlay() {
+  modifierOfferedForIndex = currentRoundIndex;
+  const subtitleEl = document.getElementById("modifierSubtitle");
+  if (subtitleEl) {
+    subtitleEl.textContent =
+      `You're ${hotStreak} great rounds deep! Pick an optional twist for round ` +
+      `${currentRoundIndex + 1}, or skip and play it normal. Current bonus pool: ` +
+      `${modifierBonus >= 0 ? "+" : ""}${modifierBonus}.`;
+  }
+  document.getElementById("modifierOverlay").classList.remove("hidden");
+}
+
+function hideModifierOverlay() {
+  document.getElementById("modifierOverlay").classList.add("hidden");
+}
+
+// type is one of "double"/"hard"/"quick", or null for the skip button.
+function chooseModifier(type) {
+  pendingModifierType = type;
+  hideModifierOverlay();
+  loadRound();
 }
 
 function renderRoundBreakdown() {
@@ -759,9 +946,32 @@ function renderRoundBreakdown() {
   list.innerHTML = "";
   roundScores.forEach((s, i) => {
     const li = document.createElement("li");
-    li.textContent = `Round ${i + 1}: ${s} / 100`;
+    const mod = roundModifiers[i];
+    let text = `Round ${i + 1}: ${s} / 100`;
+    if (mod) {
+      const info = MODIFIER_INFO[mod.type];
+      const sign = mod.delta > 0 ? "+" : "";
+      text += ` (${info.label}: ${mod.success ? "success" : "failed"}, ${sign}${mod.delta} bonus)`;
+    }
+    li.textContent = text;
     list.appendChild(li);
   });
+}
+
+// Screen-reader-accessible plain-text version of the "Base + medals +
+// modifiers = total" breakdown drawn on the share card canvas (see
+// drawShareCanvas) — same "make the +numbers legible" goal, just for
+// anyone not looking at the image. Blank when there's nothing to explain
+// (a plain score with no bonuses at all).
+function renderScoreBreakdownNote(finalScore, baseScore, medalCount, modifierBonusTotal) {
+  const el = document.getElementById("scoreBreakdownNote");
+  if (!el) return;
+  const parts = [];
+  if (medalCount > 0) parts.push(`${medalCount} medal${medalCount > 1 ? "s" : ""} (+${medalCount * MEDAL_BONUS_PER_MEDAL})`);
+  if (modifierBonusTotal) parts.push(`modifiers (${modifierBonusTotal > 0 ? "+" : ""}${modifierBonusTotal})`);
+  el.textContent = parts.length
+    ? `Score breakdown: ${baseScore} base + ${parts.join(" + ")} = ${finalScore}.`
+    : "";
 }
 
 // Re-displays a previously saved (first) score for the given day, e.g. after
@@ -776,19 +986,24 @@ function showSavedScoreOverlay(date) {
 
   roundScores = record.roundScores;
   roundHardFlags = record.hardFlags || [];
+  roundModifiers = record.roundModifiers || [];
+  modifierBonus = record.modifierBonus || 0;
   currentShareSeed = typeof record.seed === "number" ? record.seed : hashSeed(`${date}:${record.score}`);
   currentMedals = record.medals || [];
   currentShareScore = record.score;
+  currentModifierBonus = modifierBonus;
   currentBestHotStreak = record.bestHotStreak || 0;
   currentWorstColdStreak = record.worstColdStreak || 0;
   currentDailyStreak = computeDailyStreak(date);
-  currentIsSundmaster = record.score > 100;
+  currentSundmasterTier = sundmasterTier(record.score);
+  currentIsSundmaster = currentSundmasterTier >= 1;
   currentAttemptNumber = 1; // viewing the official recorded result, not a new attempt
 
-  applyFinalTitle(currentIsSundmaster);
+  applyFinalTitle(currentSundmasterTier);
   document.getElementById("finalScore").textContent =
     `Final Score: ${record.score} / 100 ${scoreEmoji(record.score)}${record.score === 0 ? " 🥀" : ""}`;
   renderRoundBreakdown();
+  renderScoreBreakdownNote(record.score, baseScoreValue(), currentMedals.length, modifierBonus);
   updateShareCardPreview();
   updateShareBtnTier(record.score);
   document.getElementById("firstScoreNote").textContent =
@@ -835,14 +1050,20 @@ function drawShareCanvas() {
   const theme = themeForScore(shareScore);
   paintShareBackground(ctx, theme, W, H, shareScore, activeGameDate);
 
-  // SUNDMASTER: a flawless run stacked with medal bonuses pushed the score
-  // past the normal 100 ceiling. Tile the Medelpad coat-of-arms icon (plus
-  // a couple of celebratory emoji) scattered across the card at low
-  // opacity, seeded by date so re-sharing the same day's card always looks
-  // identical. Drawn after the themed background but before any text, so
+  const baseScore = baseScoreValue();
+  const medalBonusTotal = currentMedals.length * MEDAL_BONUS_PER_MEDAL;
+  const tier = currentSundmasterTier;
+
+  // SUNDMASTER: a flawless run stacked with medal/modifier bonuses pushed
+  // the score past the normal 100 ceiling. Tile the Medelpad coat-of-arms
+  // icon (plus a couple of celebratory emoji) scattered across the card at
+  // low opacity, seeded by date so re-sharing the same day's card always
+  // looks identical -- density/opacity escalate with the tier (see
+  // sundmasterTier()) so a truly ridiculous score reads as truly
+  // ridiculous. Drawn after the themed background but before any text, so
   // it reads as festive texture rather than obscuring the score.
-  if (currentIsSundmaster) {
-    paintSundmasterOverlay(ctx, W, H, headerIconImg, activeGameDate || String(shareScore));
+  if (tier >= 1) {
+    paintSundmasterOverlay(ctx, W, H, headerIconImg, activeGameDate || String(shareScore), tier);
   }
 
   ctx.save();
@@ -859,11 +1080,11 @@ function drawShareCanvas() {
   }
   ctx.restore();
 
-  ctx.font = currentIsSundmaster ? "bold 16px sans-serif" : "16px sans-serif";
-  ctx.fillStyle = currentIsSundmaster ? "#ffd166" : "#c9d6e3";
+  ctx.font = tier >= 1 ? "bold 16px sans-serif" : "16px sans-serif";
+  ctx.fillStyle = tier >= 1 ? "#ffd166" : "#c9d6e3";
   ctx.fillText(
     activeGameDate
-      ? (currentIsSundmaster ? `🏆 SUNDMASTER! · ${activeGameDate}` : `Game of ${activeGameDate}`)
+      ? (tier >= 1 ? `${SUNDMASTER_TITLES[tier]} · ${activeGameDate}` : `Game of ${activeGameDate}`)
       : "",
     28,
     78
@@ -941,6 +1162,18 @@ function drawShareCanvas() {
     ctx.fillText("🥀", 395, 150);
   }
 
+  // Plain-language "why isn't this just my round average" breakdown, so a
+  // score like 110/100 (or -15/100) never reads as a bug — only drawn when
+  // there's actually something to explain.
+  if (medalBonusTotal > 0 || currentModifierBonus !== 0) {
+    const parts = [`${baseScore} base`];
+    if (medalBonusTotal > 0) parts.push(`medals +${medalBonusTotal}`);
+    if (currentModifierBonus !== 0) parts.push(`modifiers ${currentModifierBonus > 0 ? "+" : ""}${currentModifierBonus}`);
+    ctx.font = "13px sans-serif";
+    ctx.fillStyle = "#e8f0ff";
+    ctx.fillText(`${parts.join(" + ")} = ${finalScore}`, 28, 190);
+  }
+
   ctx.font = "16px sans-serif";
   ctx.fillStyle = "#ffffff";
   roundScores.forEach((s, i) => {
@@ -969,16 +1202,31 @@ function drawShareCanvas() {
   ctx.fillText(shareSiteUrl(), W - 28, H - 18);
   ctx.textAlign = "left";
 
-  // Speed/efficiency medal badges, the daily play-streak badge, and the
-  // in-game hot/cold streak badges — all drawn as the same style of pill,
-  // sitting between the round breakdown and the footer link. The "showcase"
-  // hot-streak pill gets a warm gold-tinted background to celebrate a great
-  // run; the "roast" cold-streak pill deliberately gets a loud red-tinted
-  // background so a bad run stands out and friends can have a laugh at it.
+  // Speed/efficiency medal badges, modifier outcome badges, the daily
+  // play-streak badge, and the in-game hot/cold streak badges — all drawn
+  // as the same style of pill, sitting between the round breakdown and the
+  // footer link. Every pill that actually contributed to the score shows
+  // its exact +/-N so a total like 110/100 (or a negative score) is never a
+  // mystery. The "showcase" hot-streak pill gets a warm gold-tinted
+  // background to celebrate a great run; the "roast" cold-streak pill
+  // deliberately gets a loud red-tinted background so a bad run stands out
+  // and friends can have a laugh at it.
   const NORMAL_PILL_BG = "rgba(0, 0, 0, 0.4)";
   const GOLD_PILL_BG = "rgba(255, 179, 71, 0.35)";
   const ROAST_PILL_BG = "rgba(220, 50, 50, 0.45)";
-  const badgePills = currentMedals.map((medal) => ({ label: `${medal.icon} ${medal.label}`, bg: NORMAL_PILL_BG }));
+  const badgePills = currentMedals.map((medal) => ({
+    label: `${medal.icon} ${medal.label} (+${MEDAL_BONUS_PER_MEDAL})`,
+    bg: NORMAL_PILL_BG,
+  }));
+  roundModifiers.forEach((mod) => {
+    if (!mod) return;
+    const info = MODIFIER_INFO[mod.type];
+    const deltaText = `${mod.delta > 0 ? "+" : ""}${mod.delta}`;
+    badgePills.push({
+      label: `${info.icon} ${info.label} (${deltaText})`,
+      bg: mod.success ? GOLD_PILL_BG : ROAST_PILL_BG,
+    });
+  });
   if (currentBestHotStreak >= STREAK_MIN_LENGTH) {
     badgePills.push({ label: `✨ Streak x${currentBestHotStreak}`, bg: GOLD_PILL_BG });
   }
@@ -1093,6 +1341,7 @@ async function startGame(requestedDate) {
   document.getElementById("finalOverlay").classList.add("hidden");
   document.getElementById("resultOverlay").classList.add("hidden");
   document.getElementById("startOverlay").classList.add("hidden");
+  document.getElementById("modifierOverlay").classList.add("hidden");
   document.getElementById("shareStatus").textContent = "";
   const noteEl = document.getElementById("firstScoreNote");
   if (noteEl) noteEl.textContent = "";
@@ -1122,13 +1371,21 @@ async function startGame(requestedDate) {
     coldStreak = 0;
     bestHotStreak = 0;
     worstColdStreak = 0;
+    modifierBonus = 0;
+    roundModifiers = [];
+    modifierOfferedForIndex = -1;
+    pendingModifierType = null;
+    activeModifierType = null;
+    currentRoundTimeLimit = ROUND_TIME_SECONDS;
     currentShareSeed = null;
     currentMedals = [];
+    currentModifierBonus = 0;
     currentBestHotStreak = 0;
     currentWorstColdStreak = 0;
     currentDailyStreak = 0;
     currentIsSundmaster = false;
-    applyFinalTitle(false);
+    currentSundmasterTier = 0;
+    applyFinalTitle(0);
     updateHud();
     // Don't jump straight into round 1 (which would both spoil the photo
     // and silently start the 2-minute timer) — show a start gate first so
@@ -1230,4 +1487,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const latestDate = pickDefaultDate(manifestCache);
     if (latestDate) startGame(latestDate);
   });
+  document.getElementById("modifierDoubleBtn").addEventListener("click", () => chooseModifier("double"));
+  document.getElementById("modifierHardBtn").addEventListener("click", () => chooseModifier("hard"));
+  document.getElementById("modifierQuickBtn").addEventListener("click", () => chooseModifier("quick"));
+  document.getElementById("modifierSkipBtn").addEventListener("click", () => chooseModifier(null));
 });

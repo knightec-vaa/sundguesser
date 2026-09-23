@@ -187,6 +187,63 @@ function paintShareBackground(ctx, theme, W, H, score, date) {
   }
 }
 
+// Stock-ticker-style line chart tracing the round-by-round scores, painted
+// as a low-opacity full-bleed watermark behind the score panel/round
+// breakdown (which have their own opaque scrims and stay fully legible on
+// top of it). Each segment is colored green when that round scored higher
+// than the previous one and red when it dropped — same "up good, down bad"
+// convention as a stock chart — with a matching subtle fill under the line
+// so the overall day's trend (rally, crash, comeback...) reads at a glance.
+function paintScoreTrendChart(ctx, W, H, roundScores) {
+  if (!roundScores || roundScores.length < 2) return;
+  const padX = 30;
+  const top = 55, bottom = H - 26;
+  const n = roundScores.length;
+  const stepX = (W - padX * 2) / (n - 1);
+  const points = roundScores.map((s, i) => ({
+    x: padX + i * stepX,
+    y: bottom - (Math.max(0, Math.min(100, s)) / 100) * (bottom - top),
+  }));
+
+  ctx.save();
+  ctx.globalAlpha = 0.32;
+
+  // Fill under the line, tinted by the overall direction (first -> last
+  // round), so a comeback or a collapse is visible even before reading the
+  // individual segment colors.
+  const trendUp = roundScores[n - 1] >= roundScores[0];
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, bottom);
+  points.forEach((p) => ctx.lineTo(p.x, p.y));
+  ctx.lineTo(points[n - 1].x, bottom);
+  ctx.closePath();
+  ctx.fillStyle = trendUp ? "rgba(6, 214, 160, 0.22)" : "rgba(239, 71, 111, 0.20)";
+  ctx.fill();
+
+  // Individual up/down segments, ticker-style.
+  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  for (let i = 1; i < points.length; i++) {
+    ctx.strokeStyle = roundScores[i] >= roundScores[i - 1] ? "#06d6a0" : "#ef476f";
+    ctx.beginPath();
+    ctx.moveTo(points[i - 1].x, points[i - 1].y);
+    ctx.lineTo(points[i].x, points[i].y);
+    ctx.stroke();
+  }
+
+  // Round markers.
+  ctx.globalAlpha = 0.5;
+  points.forEach((p) => {
+    ctx.beginPath();
+    ctx.fillStyle = "#ffffff";
+    ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
+}
+
 // SUNDMASTER celebration layer: scatters the Medelpad coat-of-arms icon
 // (plus a few festive emoji) across the whole card at low opacity, with
 // slight per-tile rotation/size jitter so it reads as an exciting confetti
@@ -194,37 +251,99 @@ function paintShareBackground(ctx, theme, W, H, score, date) {
 // re-rendering the same day's card is always pixel-identical. Drawn on top
 // of the normal tier background but before any text/panels, which already
 // have their own drop shadows/scrims and stay fully legible on top of it.
-function paintSundmasterOverlay(ctx, W, H, iconImg, seedKey) {
+// tier (1-3, see sundmasterTier() in script.js) scales density, opacity,
+// and icon variety, so a truly ridiculous score (stacked medals/modifiers
+// well past 100) reads as visibly more chaotic than a bare-minimum 101.
+function paintSundmasterOverlay(ctx, W, H, iconImg, seedKey, tier = 1) {
   const rng = mulberry32(hashSeed(`sundmaster-${seedKey}`));
-  const bonusIcons = ["✨", "👑", "🏆", "🐐"];
+  const bonusIcons = tier >= 3
+    ? ["✨", "👑", "🏆", "🐐", "🌈", "🎉", "💥"]
+    : tier === 2
+      ? ["✨", "👑", "🏆", "🐐", "🎉"]
+      : ["✨", "👑", "🏆", "🐐"];
   const hasIcon = iconImg && iconImg.complete && iconImg.naturalWidth > 0;
-  const cols = 7, rows = 4;
+  const cols = 6 + tier, rows = 3 + tier;
   ctx.save();
-  ctx.globalAlpha = 0.16;
+  ctx.globalAlpha = 0.12 + tier * 0.045;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const cx = ((c + 0.5) / cols) * W + (rng() - 0.5) * 30;
       const cy = ((r + 0.5) / rows) * H + (rng() - 0.5) * 30;
-      const rot = (rng() - 0.5) * 0.9;
+      const rot = (rng() - 0.5) * (0.9 + tier * 0.3);
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(rot);
       // Roughly 1-in-3 tiles use a bonus emoji instead of the coat of arms,
       // so the pattern feels varied rather than a single repeated stamp.
       if (hasIcon && rng() > 0.32) {
-        const size = 26 + rng() * 10;
+        const size = 26 + rng() * 10 + tier * 3;
         ctx.drawImage(iconImg, -size / 2, -size / 2, size, size * (iconImg.naturalHeight / iconImg.naturalWidth));
       } else {
         const icon = bonusIcons[Math.floor(rng() * bonusIcons.length)];
-        ctx.font = `${22 + Math.floor(rng() * 12)}px sans-serif`;
+        ctx.font = `${22 + Math.floor(rng() * 12) + tier * 2}px sans-serif`;
         ctx.fillText(icon, 0, 0);
       }
       ctx.restore();
     }
   }
   ctx.restore();
+
+  // Tier 3 ("ULTRA SUNDMASTER") gets an extra pulsing rainbow ring around
+  // the card border on top of the confetti field, since at that point a
+  // few extra scattered icons alone doesn't feel proportionate to just how
+  // absurd the score got.
+  if (tier >= 3) {
+    const rainbow = ["#ef476f", "#f78c6b", "#ffd166", "#06d6a0", "#118ab2", "#9b5de5"];
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 6;
+    const segments = rainbow.length;
+    const perimeter = 2 * (W + H);
+    const segLen = perimeter / segments;
+    let dist = 0;
+    for (let i = 0; i < segments; i++) {
+      ctx.strokeStyle = rainbow[i];
+      ctx.beginPath();
+      tracePerimeterSegment(ctx, W, H, dist, dist + segLen);
+      ctx.stroke();
+      dist += segLen;
+    }
+    ctx.restore();
+  }
+}
+
+// Walks `from`..`to` distance (in px) around the card's outer perimeter,
+// starting at the top-left corner and going clockwise, building a path for
+// the tier-3 rainbow border ring in paintSundmasterOverlay above.
+function tracePerimeterSegment(ctx, W, H, from, to) {
+  const corners = [
+    [0, 0], [W, 0], [W, H], [0, H], [0, 0],
+  ];
+  const edgeLens = [W, H, W, H];
+  let acc = 0;
+  let started = false;
+  for (let i = 0; i < 4; i++) {
+    const edgeStart = acc;
+    const edgeEnd = acc + edgeLens[i];
+    const segStart = Math.max(from, edgeStart);
+    const segEnd = Math.min(to, edgeEnd);
+    if (segEnd > segStart) {
+      const t0 = (segStart - edgeStart) / edgeLens[i];
+      const t1 = (segEnd - edgeStart) / edgeLens[i];
+      const [x0, y0] = corners[i];
+      const [x1, y1] = corners[i + 1];
+      const px0 = x0 + (x1 - x0) * t0, py0 = y0 + (y1 - y0) * t0;
+      const px1 = x0 + (x1 - x0) * t1, py1 = y0 + (y1 - y0) * t1;
+      if (!started) {
+        ctx.moveTo(px0, py0);
+        started = true;
+      }
+      ctx.lineTo(px1, py1);
+    }
+    acc = edgeEnd;
+  }
 }
 
 // Each tier gets a deep base gradient plus a 3-color band trio. The
