@@ -125,6 +125,8 @@ STATS = {
     "image_download_errors": 0,
     "image_quality_rejected": 0,
     "no_road_name_rejected": 0,
+    "too_close_rejected": 0,
+    "already_rejected": 0,
 }
 
 
@@ -270,6 +272,8 @@ def report_stats(candidate_count, added_count):
         "--- Run summary ---",
         f"Candidates considered: {candidate_count}",
         f"Locations added: {added_count}",
+        f"Rejected, too close to existing pool location: {STATS['too_close_rejected']}",
+        f"Rejected, already on permanent blocklist: {STATS['already_rejected']}",
         f"Rejected, no road name: {STATS['no_road_name_rejected']}",
         f"Rejected, image quality: {STATS['image_quality_rejected']}",
         f"KartaView query errors: {STATS['kartaview_query_errors']}",
@@ -304,6 +308,8 @@ def report_stats(candidate_count, added_count):
             for label, value in [
                 ("Candidates considered", candidate_count),
                 ("Locations added", added_count),
+                ("Rejected, too close to existing pool location", STATS["too_close_rejected"]),
+                ("Rejected, already on permanent blocklist", STATS["already_rejected"]),
                 ("Rejected, no road name", STATS["no_road_name_rejected"]),
                 ("Rejected, image quality", STATS["image_quality_rejected"]),
                 ("KartaView query errors", STATS["kartaview_query_errors"]),
@@ -382,12 +388,14 @@ def main():
             for klat, klng in known_coords
         )
         if too_close:
+            STATS["too_close_rejected"] += 1
             continue
 
         img = image_url(photo)
         if not img:
             continue
         if img in rejected:
+            STATS["already_rejected"] += 1
             continue
 
         checked += 1
