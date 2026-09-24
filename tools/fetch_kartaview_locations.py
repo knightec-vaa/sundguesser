@@ -94,11 +94,16 @@ GRID_POINTS = [
     (62.3350, 17.2350),  # Sundsbruk
 ]
 
-MIN_SPACING_METERS = 350  # avoid near-duplicate photos of the same spot
-# (was 120 — too tight: two photos 120-260m apart in a small area like
-# Stenstan are practically indistinguishable to a player, and this is what
-# let near-duplicate "same street, different corner" spots accumulate in
-# the pool and later get drawn into the same or consecutive days' games.)
+MIN_SPACING_METERS = 80  # only blocks literal same-spot duplicate photos
+# (was raised to 350 briefly, but that was the wrong trade-off: it starved
+# pool growth (43/52 real KartaView candidates rejected as "too close" in
+# one run) and forced generate_game.py to keep reusing the exact same
+# already-published photo — which is more boring to a repeat player than a
+# genuinely new photo from a nearby spot. Same-day visual variety is now
+# guarded separately and more precisely by generate_game.py's
+# MIN_ROUND_SPACING_METERS, which only constrains the 5 locations actually
+# picked together for one day rather than the whole pool. This constant
+# only needs to stop KartaView returning the exact same capture point twice.)
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
