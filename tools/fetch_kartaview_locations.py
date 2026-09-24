@@ -27,6 +27,7 @@ import argparse
 import io
 import json
 import math
+import os
 import random
 import time
 import urllib.error
@@ -42,7 +43,12 @@ KARTAVIEW_API = "https://api.openstreetcam.org/2.0/photo/"
 NOMINATIM_API = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "SundGuesser/1.0 (lunch-time geoguesser prototype)"
 
-MIN_CONTRAST_STDDEV = 18  # rejects near-blank/foggy/corrupt images
+MIN_CONTRAST_STDDEV = 10  # rejects near-blank/foggy/corrupt images
+# (was 18 — too aggressive: real-world reports showed plenty of legitimately
+# good, playable outdoor photos being rejected, especially overcast Nordic
+# daylight shots with lower local contrast that are still perfectly usable
+# for the game. 10 still catches genuinely blank/solid-color/corrupt frames
+# while letting normal photos through.)
 
 # Grid of query points spread across central/greater Sundsvall. Deliberately
 # wider than just the city core so repeated automated runs (see the
@@ -88,7 +94,11 @@ GRID_POINTS = [
     (62.3350, 17.2350),  # Sundsbruk
 ]
 
-MIN_SPACING_METERS = 120  # avoid near-duplicate photos of the same spot
+MIN_SPACING_METERS = 350  # avoid near-duplicate photos of the same spot
+# (was 120 — too tight: two photos 120-260m apart in a small area like
+# Stenstan are practically indistinguishable to a player, and this is what
+# let near-duplicate "same street, different corner" spots accumulate in
+# the pool and later get drawn into the same or consecutive days' games.)
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
@@ -106,11 +116,36 @@ def fetch_json(url):
         return json.loads(resp.read())
 
 
+# Tallies surfaced at the end of the run (and, on CI, as GitHub Actions
+# annotations/step-summary) so a run that quietly fails every network call
+# doesn't just look identical to a run that legitimately found nothing new.
+STATS = {
+    "kartaview_query_errors": 0,
+    "geocode_errors": 0,
+    "image_download_errors": 0,
+    "image_quality_rejected": 0,
+    "no_road_name_rejected": 0,
+}
+
+
+def warn(message):
+    """Emits a GitHub Actions warning annotation when running in a workflow
+    (visible directly on the run summary/PR checks, not just buried in the
+    step log), and always prints to stdout so local runs see it too.
+    """
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning::{message}")
+    else:
+        print(f"WARNING: {message}")
+
+
 def query_kartaview(lat, lng, radius=300):
     url = f"{KARTAVIEW_API}?lat={lat}&lng={lng}&radius={radius}"
     try:
         data = fetch_json(url)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        STATS["kartaview_query_errors"] += 1
+        print(f"  ! KartaView query failed for ({lat:.4f},{lng:.4f}): {exc}")
         return []
     return data.get("result", {}).get("data") or []
 
@@ -123,7 +158,9 @@ def reverse_geocode(lat, lng):
     url = f"{NOMINATIM_API}?format=json&lat={lat}&lon={lng}&zoom=17&addressdetails=1"
     try:
         data = fetch_json(url)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        STATS["geocode_errors"] += 1
+        print(f"  ! Reverse geocode failed for ({lat:.4f},{lng:.4f}): {exc}")
         return None, False
     addr = data.get("address", {})
     road = addr.get("road") or addr.get("pedestrian") or addr.get("neighbourhood")
@@ -161,7 +198,9 @@ def fetch_and_check_image(img_url):
         raw = urllib.request.urlopen(
             urllib.request.Request(img_url, headers={"User-Agent": USER_AGENT}), timeout=20
         ).read()
-    except Exception:
+    except Exception as exc:
+        STATS["image_download_errors"] += 1
+        print(f"  ! Image download failed ({img_url}): {exc}")
         return None, False
 
     try:
@@ -216,6 +255,62 @@ def save_rejected(rejected_urls):
     REJECTED_FILE.write_text(
         json.dumps({"rejected_img_urls": sorted(rejected_urls)}, indent=2) + "\n"
     )
+
+
+def report_stats(candidate_count, added_count):
+    """Prints a run summary and raises GitHub Actions annotations for
+    conditions that used to fail silently: a run that adds 0 locations
+    looked identical whether that was because everything was legitimately
+    filtered out (fine) or because every network call errored out (a real
+    problem worth investigating). Also writes a step summary table so it's
+    visible on the workflow run page without opening the raw logs.
+    """
+    lines = [
+        "",
+        "--- Run summary ---",
+        f"Candidates considered: {candidate_count}",
+        f"Locations added: {added_count}",
+        f"Rejected, no road name: {STATS['no_road_name_rejected']}",
+        f"Rejected, image quality: {STATS['image_quality_rejected']}",
+        f"KartaView query errors: {STATS['kartaview_query_errors']}",
+        f"Reverse-geocode errors: {STATS['geocode_errors']}",
+        f"Image download errors: {STATS['image_download_errors']}",
+    ]
+    print("\n".join(lines))
+
+    total_errors = (
+        STATS["kartaview_query_errors"] + STATS["geocode_errors"] + STATS["image_download_errors"]
+    )
+    if total_errors:
+        warn(
+            f"{total_errors} network error(s) during this fetch run "
+            f"({STATS['kartaview_query_errors']} KartaView, {STATS['geocode_errors']} "
+            f"geocode, {STATS['image_download_errors']} image download) — some "
+            "candidates may have been skipped due to failures rather than genuine "
+            "quality rejection."
+        )
+    if added_count == 0 and candidate_count > 0 and total_errors >= candidate_count // 2:
+        warn(
+            "0 new locations were added and network errors affected a large share of "
+            "candidates this run — this run likely under-delivered due to failures, "
+            "not just filtering. Consider re-running."
+        )
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as f:
+            f.write("### Fetch KartaView locations — run summary\n\n")
+            f.write("| Metric | Count |\n|---|---|\n")
+            for label, value in [
+                ("Candidates considered", candidate_count),
+                ("Locations added", added_count),
+                ("Rejected, no road name", STATS["no_road_name_rejected"]),
+                ("Rejected, image quality", STATS["image_quality_rejected"]),
+                ("KartaView query errors", STATS["kartaview_query_errors"]),
+                ("Reverse-geocode errors", STATS["geocode_errors"]),
+                ("Image download errors", STATS["image_download_errors"]),
+            ]:
+                f.write(f"| {label} | {value} |\n")
 
 
 def main():
@@ -299,6 +394,7 @@ def main():
         name, has_road = reverse_geocode(lat, lng)
         time.sleep(delay_rng.uniform(1.0, 2.0))  # Nominatim usage policy: max 1 req/sec
         if args.require_road_name and not has_road:
+            STATS["no_road_name_rejected"] += 1
             print(f"  - skip (no road name): {name or 'unknown'} ({lat:.5f},{lng:.5f})")
             continue
         name = name or "Sundsvall"
@@ -315,6 +411,8 @@ def main():
             raw_bytes, ok = fetch_and_check_image(img)
             image_downloads += 1
             if not ok:
+                if raw_bytes is not None:
+                    STATS["image_quality_rejected"] += 1
                 print(f"  - skip (failed image quality check): {name} ({lat:.5f},{lng:.5f})")
                 continue
 
@@ -358,6 +456,8 @@ def main():
         }
         new_entries.append(entry)
         print(f"  + {loc_id}: {name} ({lat:.5f},{lng:.5f})\n    {img}")
+
+    report_stats(len(candidates), len(new_entries))
 
     if args.dry_run:
         print(f"\nDry run: {len(new_entries)} candidates prepared, nothing written.")

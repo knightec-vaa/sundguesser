@@ -95,13 +95,73 @@ def broad_area(name):
     return area
 
 
+# Minimum distance (metres) enforced between every pair of locations chosen
+# for the same day. Confirmed via real data that without this, a day could
+# pick two near-duplicate spots (two "Sjögatan, Stenstan" 194m apart both
+# in the same game) purely by chance, even from an otherwise healthy pool —
+# this is a belt-and-suspenders guard on top of the pool-side spacing check
+# in fetch_kartaview_locations.py (MIN_SPACING_METERS), which only prevents
+# near-duplicates from entering the pool in the first place, not from being
+# drawn together into one day.
+MIN_ROUND_SPACING_METERS = 400
+
+
+def _spaced_sample(candidates, count, rng, locked, min_spacing):
+    """Greedily selects `count` locations from `candidates` (visited in an
+    rng-shuffled order) such that every pick stays at least `min_spacing`
+    metres from every already-chosen location for the day (both `locked` —
+    picks made outside this call, e.g. the easy/hard rounds — and picks
+    made earlier in this same call). If the pool is too small/dense to fill
+    every slot while honouring the constraint, falls back to filling the
+    rest with whatever's left (preferring the least-crowded remaining spots
+    first) rather than ever failing generation outright.
+    """
+    shuffled = candidates[:]
+    rng.shuffle(shuffled)
+
+    selected = []
+    chosen = list(locked)
+    leftover = []
+    for loc in shuffled:
+        if len(selected) >= count:
+            leftover.append(loc)
+            continue
+        far_enough = all(
+            haversine_m(loc["lat"], loc["lng"], other["lat"], other["lng"]) >= min_spacing
+            for other in chosen
+        )
+        if far_enough:
+            selected.append(loc)
+            chosen.append(loc)
+        else:
+            leftover.append(loc)
+
+    if len(selected) < count:
+        # Not enough spaced-out candidates left — fill remaining slots from
+        # whatever's left, preferring whichever spot is farthest from the
+        # already-chosen set (the "least crowded" option available), rather
+        # than failing the whole day's generation over a sparse pool.
+        leftover.sort(
+            key=lambda loc: min(
+                haversine_m(loc["lat"], loc["lng"], other["lat"], other["lng"])
+                for other in chosen
+            ),
+            reverse=True,
+        )
+        needed = count - len(selected)
+        selected.extend(leftover[:needed])
+
+    return selected
+
+
 def pick_round_order(unused, count, date_str):
     """Pick `count` locations from `unused` and order them easy -> hard.
 
     The first round is the most central/closest-to-downtown candidate
     (presumably the most recognizable, easing players in). The last round
     is the most distant/unusual candidate available (the "hard" round). The
-    middle rounds are a random sample of whatever's left, in random order.
+    middle rounds are a spacing-constrained random sample of whatever's
+    left (see _spaced_sample), in random order.
     """
     by_distance = sorted(
         unused, key=lambda loc: haversine_m(*CITY_CENTER, loc["lat"], loc["lng"])
@@ -115,7 +175,11 @@ def pick_round_order(unused, count, date_str):
     easiest = by_distance[0]
 
     remaining_pool = [loc for loc in by_distance if loc is not easiest and loc not in hardest]
-    middle = rng.sample(remaining_pool, count - 1 - hard_count)
+    spacing_rng = random.Random(f"{date_str}:round-spacing")
+    middle = _spaced_sample(
+        remaining_pool, count - 1 - hard_count, spacing_rng,
+        locked=[easiest] + hardest, min_spacing=MIN_ROUND_SPACING_METERS,
+    )
 
     ordered = [easiest] + middle + hardest
     for index, location in enumerate(ordered):
