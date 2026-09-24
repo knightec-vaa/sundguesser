@@ -40,7 +40,7 @@ const CITY_CENTER = [62.3908, 17.3069];
 // Also fully backward compatible: it only ever adds new optional fields
 // (modifierBonus/roundModifiers) to freshly-saved records; old saved scores
 // (from before this existed) simply have none and are read back as 0/[].
-const MODIFIER_DOUBLE_THRESHOLD = 80; // round score needed to "win" Double or Nothing
+const MODIFIER_DOUBLE_THRESHOLD = 90; // round score needed to "win" Double or Nothing
 const MODIFIER_DOUBLE_SEED_BONUS = 10; // granted on a win when there was no existing pool to double
 const MODIFIER_HARD_DECAY_METERS = 220; // steeper than the normal 450 -- much less forgiving
 const MODIFIER_HARD_THRESHOLD = 65; // score (under that steeper decay) needed to bank the bonus
@@ -52,7 +52,7 @@ const MODIFIER_QUICK_BONUS = 10;
 const MODIFIER_INFO = {
   double: {
     icon: "🎲", label: "Double or Nothing",
-    pitch: "Final round is Double or Nothing: score 80+ to double your modifier bonus pool, or lose it all.",
+    pitch: "Final round is Double or Nothing: score 90+ to double your modifier bonus pool, or lose it all.",
   },
   hard: {
     icon: "💀", label: "Hard Round",
